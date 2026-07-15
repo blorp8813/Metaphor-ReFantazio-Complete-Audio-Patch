@@ -19,6 +19,9 @@ WatchdogPollIntervalMs = 250
 NonSilentWindowMs = 750
 BufferActivityWindowMs = 750
 PeriodicStatusMs = 1000
+DetailedBufferLogging = false
+BufferLogSampleRate = 100
+ErrorReminderMs = 30000
 ```
 
 An empty or relative `LogPath` is resolved beside `MetaphorAudioFix.asi`
@@ -41,32 +44,44 @@ Each record includes:
 - the Windows thread identifier
 - severity and event details
 
-Raw audio samples are never logged. Each submitted object-buffer period is only
+Raw audio samples are never logged. Submitted object-buffer periods are only
 classified as `silent` or `non-silent` using an absolute sample threshold of
-`0.000001`.
+`0.000001`. The audio thread normally updates compact atomic counters and
+timestamps rather than formatting a record per period. Set
+`DetailedBufferLogging=true` to sample one successful buffer period out of each
+`BufferLogSampleRate`; failures and HRESULT transitions remain event-driven.
 
 ## Observed operations
 
 The diagnostic path records spatial stream activation and the internal stereo
 output stream's `IAudioClient` activation, initialization, event handle,
-`Start`, `Stop`, and `Reset`. It records each
-`IAudioRenderClient::GetBuffer`/`ReleaseBuffer` result, periodic buffer padding,
-audio-clock position/frequency, MMDevice endpoint notifications, numeric
-HRESULTs, event-driven update entry, thread identifiers, and timestamps.
+`Start`, `Stop`, and `Reset`. Atomic metrics cover GetBuffer/ReleaseBuffer
+counts, last HRESULTs, failure counts, last callback/non-silent timestamps, and
+total submitted frames. The watchdog periodically records those aggregates
+with buffer padding, audio-clock position/frequency, MMDevice endpoint
+notifications, thread identifiers, and timestamps.
 
 `IMMNotificationClient` callbacks report default-device changes, state changes,
 addition, removal/disconnection, and endpoint property changes.
 
-## Observation-only stall rule
+Repeated padding/position/frequency failures are rate-limited: the first
+failure, an HRESULT change, recovery, and a reminder no more often than
+`ErrorReminderMs` are logged.
 
-The watchdog emits `SUSPECTED_AUDIO_STALL` once when all of these are true:
+## Observation-only stall rules
 
-1. `IAudioClient::Start` succeeded and no successful `Stop` has followed.
-2. A valid `IAudioClock::GetPosition` measurement exists.
-3. The measured position has not changed for `StallTimeoutMs`.
-4. Non-silent game audio was submitted within `NonSilentWindowMs`.
-5. Buffer operations occurred within `BufferActivityWindowMs`, or the started
-   event-driven stream still expects buffer operations.
+Both conditions require a successfully started stream, a valid audio-clock
+measurement, and no clock-position progress for `StallTimeoutMs`.
+
+- `SUSPECTED_CLOCK_STALL_WITH_SUBMISSIONS` means callbacks and non-silent
+  submissions continued while the clock remained frozen.
+- `SUSPECTED_RENDER_CALLBACK_STARVATION` means active non-silent playback was
+  latched when progress stopped, the event-driven stream still expects work,
+  and callbacks then ceased beyond `BufferActivityWindowMs`.
+
+The activity latch intentionally survives beyond the recent-activity windows,
+so callback starvation can still be reported after the two-second timeout when
+callbacks stop immediately after a non-silent period.
 
 The detector is deliberately conservative when no audio clock is available: it
 logs that limitation and never declares a stall. A later position change, stop,
@@ -82,10 +97,34 @@ The state machine has no Windows dependency. Run it natively on macOS with:
 ```
 
 The Windows build also compiles `stall_detector_tests.exe`, allowing the same
-cases to be exercised under Wine/CrossOver later. The tests cover healthy clock
-progress, the exact timeout boundary, one-shot reporting, recovery, stale
-non-silent input, stale buffer activity, expected event-driven buffers, and
-stopped streams.
+cases to be exercised under Wine/CrossOver later. Tests cover healthy clock
+progress, continued-submission stalls, immediate callback starvation beyond
+the timeout, one-shot reporting, recovery, stopped streams, and preservation of
+an already-started state after a failed `Start` such as
+`AUDCLNT_E_NOT_STOPPED`.
+
+`logger_shutdown_tests.exe` floods the logger queue, requests shutdown, and
+requires both confirmed writer termination and closed writer/wake/file handles.
+
+## Controlled teardown and endpoint ownership
+
+The interface returned by `CoCreateInstance` is treated only as the requested
+interface. The plugin calls `QueryInterface(IID_IMMDeviceEnumerator)`, hooks and
+registers through that result, and retains exactly that query reference while
+the callback is registered. Controlled teardown unregisters the callback and
+releases the retained enumerator, logging both HRESULTs.
+
+`Log::Shutdown` is called only from `ControlledRuntimeTeardown` on the runtime
+coordinator thread—not from `DllMain` or while holding the loader lock. The
+writer and wake handles are closed only after `WaitForSingleObject` confirms
+writer termination. A timeout retains every handle and waits again outside the
+loader lock.
+
+The exported `RequestMetaphorAudioFixDiagnosticShutdown` function signals this
+controlled path. A DLL self-reference is retained for the process lifetime so
+explicit loader activity cannot unload executable callback/vtable code while a
+registration or worker could still reference it. `DLL_PROCESS_DETACH` performs
+no COM, hook, logger, wait, or handle teardown.
 
 ## Known uncertainties
 
@@ -105,3 +144,6 @@ stopped streams.
 - Non-silent classification happens after the game fills the spatial object
   buffers and before the wrapper releases its stereo mix. It proves submitted
   signal energy, not that Core Audio produced audible sound.
+- The second `IAudioClock::GetPosition` value is logged as
+  `qpc_position_100ns`; it is the correlated performance-counter timestamp in
+  100 ns units, not a device-frame position.

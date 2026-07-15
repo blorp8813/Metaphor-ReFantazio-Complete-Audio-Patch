@@ -90,7 +90,13 @@ std::atomic<bool> g_hooked_audio_client_initialize = false;
 std::atomic<bool> g_hooked_audio_client_is_format_supported = false;
 std::atomic<bool> g_hooked_audio_client_get_mix_format = false;
 std::atomic<bool> g_saw_wasapi_activity = false;
-std::atomic<bool> g_registered_endpoint_notifications = false;
+bool g_endpoint_registration_claimed = false;
+SRWLOCK g_endpoint_registration_lock = SRWLOCK_INIT;
+IMMDeviceEnumerator* g_retained_endpoint_enumerator = nullptr;
+std::atomic<HANDLE> g_runtime_shutdown_event{nullptr};
+HMODULE g_self_reference = nullptr;
+std::atomic<std::uint64_t> g_active_spatial_streams{0};
+std::atomic<bool> g_teardown_requested{false};
 LARGE_INTEGER g_qpc_frequency{};
 
 std::uint64_t QpcNow()
@@ -696,7 +702,14 @@ public:
     HANDLE watchdog_thread_ = nullptr;
     std::atomic<bool> started_{false};
     std::atomic<std::uint64_t> last_non_silent_qpc_{0};
-    std::atomic<std::uint64_t> last_buffer_operation_qpc_{0};
+    std::atomic<std::uint64_t> last_callback_qpc_{0};
+    std::atomic<std::uint64_t> get_buffer_count_{0};
+    std::atomic<std::uint64_t> release_buffer_count_{0};
+    std::atomic<std::uint64_t> total_submitted_frames_{0};
+    std::atomic<std::uint64_t> get_buffer_failures_{0};
+    std::atomic<std::uint64_t> release_buffer_failures_{0};
+    std::atomic<long> last_get_buffer_hr_{S_OK};
+    std::atomic<long> last_release_buffer_hr_{S_OK};
 
     friend class SpatialRenderObject;
 };
@@ -843,6 +856,7 @@ SpatialRenderStream::SpatialRenderStream(SpatialAudioWrapper* owner, const Spati
       object_format_(AllocateWaveFormatCopy(params.ObjectFormat))
 {
     InitializeCriticalSection(&lock_);
+    g_active_spatial_streams.fetch_add(1, std::memory_order_relaxed);
     Log::Info("SpatialRenderStream created stream=%p event_handle=%p notify=%p static_mask=0x%08lX object_format=%s",
               this,
               event_handle_,
@@ -894,6 +908,7 @@ SpatialRenderStream::~SpatialRenderStream()
     }
     std::free(object_format_);
     DeleteCriticalSection(&lock_);
+    g_active_spatial_streams.fetch_sub(1, std::memory_order_release);
 }
 
 void SpatialRenderStream::RemoveObject(SpatialRenderObject* object)
@@ -1065,9 +1080,11 @@ HRESULT STDMETHODCALLTYPE SpatialRenderStream::GetService(REFIID, void** service
 HRESULT STDMETHODCALLTYPE SpatialRenderStream::Start()
 {
     const HRESULT hr = audio_client_ ? audio_client_->Start() : E_FAIL;
-    started_.store(SUCCEEDED(hr), std::memory_order_release);
+    const bool previous_started = started_.load(std::memory_order_acquire);
+    started_.store(StartedStateAfterStartResult(previous_started, static_cast<std::int32_t>(hr)),
+                   std::memory_order_release);
     Log::Info("IAudioClient::Start stream=%p result=0x%08lX started=%d",
-              this, static_cast<unsigned long>(hr), SUCCEEDED(hr));
+              this, static_cast<unsigned long>(hr), started_.load(std::memory_order_acquire));
     if (FAILED(hr)) {
         Log::Error("IAudioClient::Start failed stream=%p result=0x%08lX", this, static_cast<unsigned long>(hr));
     }
@@ -1093,7 +1110,7 @@ HRESULT STDMETHODCALLTYPE SpatialRenderStream::Reset()
     const HRESULT hr = audio_client_ ? audio_client_->Reset() : E_FAIL;
     if (SUCCEEDED(hr)) {
         last_non_silent_qpc_ = 0;
-        last_buffer_operation_qpc_ = 0;
+        last_callback_qpc_ = 0;
     }
     Log::Info("IAudioClient::Reset stream=%p result=0x%08lX", this, static_cast<unsigned long>(hr));
     if (FAILED(hr)) {
@@ -1119,16 +1136,40 @@ HRESULT STDMETHODCALLTYPE SpatialRenderStream::BeginUpdatingAudioObjects(UINT32*
 
     update_frames_ = period_frames_;
     HRESULT hr = render_client_->GetBuffer(update_frames_, reinterpret_cast<BYTE**>(&render_buffer_));
-    last_buffer_operation_qpc_.store(QpcNow(), std::memory_order_release);
-    Log::Info("Audio event callback observed stream=%p event=%p IAudioRenderClient::GetBuffer frames=%u result=0x%08lX buffer=%p",
-              this, event_handle_, update_frames_, static_cast<unsigned long>(hr), render_buffer_);
+    const std::uint64_t now = QpcNow();
+    last_callback_qpc_.store(now, std::memory_order_release);
+    const std::uint64_t operation_count = get_buffer_count_.fetch_add(1, std::memory_order_relaxed) + 1;
+    const HRESULT previous_hr = static_cast<HRESULT>(last_get_buffer_hr_.exchange(hr, std::memory_order_acq_rel));
     if (FAILED(hr)) {
+        get_buffer_failures_.fetch_add(1, std::memory_order_relaxed);
         update_frames_ = ~0u;
         render_buffer_ = nullptr;
         LeaveCriticalSection(&lock_);
-        Log::Error("IAudioRenderClient::GetBuffer failed stream=%p frames=%u result=0x%08lX",
-                   this, period_frames_, static_cast<unsigned long>(hr));
+        if (hr != previous_hr) {
+            Log::Error("IAudioRenderClient::GetBuffer failure_transition stream=%p count=%llu frames=%u previous=0x%08lX result=0x%08lX",
+                       this,
+                       static_cast<unsigned long long>(operation_count),
+                       period_frames_,
+                       static_cast<unsigned long>(previous_hr),
+                       static_cast<unsigned long>(hr));
+        }
         return hr;
+    }
+
+    if (FAILED(previous_hr)) {
+        Log::Warn("IAudioRenderClient::GetBuffer recovered stream=%p count=%llu previous=0x%08lX result=0x%08lX",
+                  this,
+                  static_cast<unsigned long long>(operation_count),
+                  static_cast<unsigned long>(previous_hr),
+                  static_cast<unsigned long>(hr));
+    } else if (g_config.diagnostics_detailed_buffer_logging &&
+               operation_count % static_cast<std::uint64_t>(g_config.diagnostics_buffer_log_sample_rate) == 0) {
+        Log::Info("IAudioRenderClient::GetBuffer sampled stream=%p count=%llu frames=%u result=0x%08lX buffer=%p",
+                  this,
+                  static_cast<unsigned long long>(operation_count),
+                  update_frames_,
+                  static_cast<unsigned long>(hr),
+                  render_buffer_);
     }
 
     for (SpatialRenderObject* object : objects_) {
@@ -1161,16 +1202,41 @@ HRESULT STDMETHODCALLTYPE SpatialRenderStream::EndUpdatingAudioObjects()
     render_buffer_ = nullptr;
     LeaveCriticalSection(&lock_);
     const std::uint64_t now = QpcNow();
-    last_buffer_operation_qpc_.store(now, std::memory_order_release);
+    last_callback_qpc_.store(now, std::memory_order_release);
     if (non_silent) {
         last_non_silent_qpc_.store(now, std::memory_order_release);
     }
     const HRESULT hr = render_client_->ReleaseBuffer(frames, 0);
-    Log::Info("IAudioRenderClient::ReleaseBuffer stream=%p frames=%u flags=0 samples=%s result=0x%08lX",
-              this, frames, non_silent ? "non-silent" : "silent", static_cast<unsigned long>(hr));
+    const std::uint64_t operation_count = release_buffer_count_.fetch_add(1, std::memory_order_relaxed) + 1;
+    const HRESULT previous_hr = static_cast<HRESULT>(last_release_buffer_hr_.exchange(hr, std::memory_order_acq_rel));
     if (FAILED(hr)) {
-        Log::Error("IAudioRenderClient::ReleaseBuffer failed stream=%p frames=%u result=0x%08lX",
-                   this, frames, static_cast<unsigned long>(hr));
+        release_buffer_failures_.fetch_add(1, std::memory_order_relaxed);
+        if (hr != previous_hr) {
+            Log::Error("IAudioRenderClient::ReleaseBuffer failure_transition stream=%p count=%llu frames=%u previous=0x%08lX result=0x%08lX samples=%s",
+                       this,
+                       static_cast<unsigned long long>(operation_count),
+                       frames,
+                       static_cast<unsigned long>(previous_hr),
+                       static_cast<unsigned long>(hr),
+                       non_silent ? "non-silent" : "silent");
+        }
+    } else {
+        total_submitted_frames_.fetch_add(frames, std::memory_order_relaxed);
+        if (FAILED(previous_hr)) {
+            Log::Warn("IAudioRenderClient::ReleaseBuffer recovered stream=%p count=%llu previous=0x%08lX result=0x%08lX",
+                      this,
+                      static_cast<unsigned long long>(operation_count),
+                      static_cast<unsigned long>(previous_hr),
+                      static_cast<unsigned long>(hr));
+        } else if (g_config.diagnostics_detailed_buffer_logging &&
+                   operation_count % static_cast<std::uint64_t>(g_config.diagnostics_buffer_log_sample_rate) == 0) {
+            Log::Info("IAudioRenderClient::ReleaseBuffer sampled stream=%p count=%llu frames=%u flags=0 samples=%s result=0x%08lX",
+                      this,
+                      static_cast<unsigned long long>(operation_count),
+                      frames,
+                      non_silent ? "non-silent" : "silent",
+                      static_cast<unsigned long>(hr));
+        }
     }
     return hr;
 }
@@ -1227,7 +1293,41 @@ void SpatialRenderStream::WatchdogLoop()
         MillisecondsToQpc(g_config.watchdog_buffer_activity_window_ms),
     });
     const std::uint64_t status_interval = MillisecondsToQpc(g_config.diagnostics_periodic_status_ms);
+    const std::uint64_t error_reminder_interval = MillisecondsToQpc(g_config.diagnostics_error_reminder_ms);
     std::uint64_t last_status = 0;
+    struct HrLogState {
+        bool initialized = false;
+        HRESULT last_hr = S_OK;
+        std::uint64_t last_error_log = 0;
+    } padding_state, position_state, frequency_state;
+
+    auto log_hr_state = [&](const char* operation, HRESULT hr, HrLogState& state, std::uint64_t now) {
+        if (!state.initialized || hr != state.last_hr) {
+            if (FAILED(hr)) {
+                Log::Error("%s failure_transition stream=%p previous=0x%08lX result=0x%08lX",
+                           operation,
+                           this,
+                           static_cast<unsigned long>(state.last_hr),
+                           static_cast<unsigned long>(hr));
+                state.last_error_log = now;
+            } else if (state.initialized && FAILED(state.last_hr)) {
+                Log::Warn("%s recovered stream=%p previous=0x%08lX result=0x%08lX",
+                          operation,
+                          this,
+                          static_cast<unsigned long>(state.last_hr),
+                          static_cast<unsigned long>(hr));
+            }
+            state.initialized = true;
+            state.last_hr = hr;
+        } else if (FAILED(hr) && now - state.last_error_log >= error_reminder_interval) {
+            Log::Error("%s failure_reminder stream=%p result=0x%08lX reminder_ms=%d",
+                       operation,
+                       this,
+                       static_cast<unsigned long>(hr),
+                       g_config.diagnostics_error_reminder_ms);
+            state.last_error_log = now;
+        }
+    };
 
     while (WaitForSingleObject(watchdog_stop_event_, static_cast<DWORD>(g_config.watchdog_poll_interval_ms)) == WAIT_TIMEOUT) {
         const std::uint64_t now = QpcNow();
@@ -1235,35 +1335,35 @@ void SpatialRenderStream::WatchdogLoop()
         const HRESULT padding_hr = audio_client_ ? audio_client_->GetCurrentPadding(&padding) : E_FAIL;
 
         UINT64 position = 0;
-        UINT64 device_position = 0;
-        const HRESULT position_hr = audio_clock_ ? audio_clock_->GetPosition(&position, &device_position) : E_NOINTERFACE;
+        UINT64 qpc_position_100ns = 0;
+        const HRESULT position_hr = audio_clock_ ? audio_clock_->GetPosition(&position, &qpc_position_100ns) : E_NOINTERFACE;
+        log_hr_state("IAudioClient::GetCurrentPadding", padding_hr, padding_state, now);
+        log_hr_state("IAudioClock::GetPosition", position_hr, position_state, now);
 
         const bool periodic = last_status == 0 || now - last_status >= status_interval;
-        if (periodic || FAILED(padding_hr) || FAILED(position_hr)) {
+        if (periodic) {
             UINT64 frequency = 0;
             const HRESULT frequency_hr = audio_clock_ ? audio_clock_->GetFrequency(&frequency) : E_NOINTERFACE;
-            Log::Info("Watchdog status stream=%p started=%d padding_hr=0x%08lX padding=%u clock_hr=0x%08lX position=%llu device_position=%llu frequency_hr=0x%08lX frequency=%llu",
+            log_hr_state("IAudioClock::GetFrequency", frequency_hr, frequency_state, now);
+            Log::Info("Watchdog status stream=%p started=%d padding_hr=0x%08lX padding=%u clock_hr=0x%08lX position=%llu qpc_position_100ns=%llu frequency_hr=0x%08lX frequency=%llu get_buffers=%llu release_buffers=%llu total_frames=%llu get_failures=%llu release_failures=%llu last_get_hr=0x%08lX last_release_hr=0x%08lX last_callback_qpc=%llu last_non_silent_qpc=%llu",
                       this,
                       started_.load(std::memory_order_acquire),
                       static_cast<unsigned long>(padding_hr),
                       padding,
                       static_cast<unsigned long>(position_hr),
                       static_cast<unsigned long long>(position),
-                      static_cast<unsigned long long>(device_position),
+                      static_cast<unsigned long long>(qpc_position_100ns),
                       static_cast<unsigned long>(frequency_hr),
-                      static_cast<unsigned long long>(frequency));
-            if (FAILED(padding_hr)) {
-                Log::Error("IAudioClient::GetCurrentPadding failed stream=%p result=0x%08lX",
-                           this, static_cast<unsigned long>(padding_hr));
-            }
-            if (audio_clock_ && FAILED(position_hr)) {
-                Log::Error("IAudioClock::GetPosition failed stream=%p result=0x%08lX",
-                           this, static_cast<unsigned long>(position_hr));
-            }
-            if (audio_clock_ && FAILED(frequency_hr)) {
-                Log::Error("IAudioClock::GetFrequency failed stream=%p result=0x%08lX",
-                           this, static_cast<unsigned long>(frequency_hr));
-            }
+                      static_cast<unsigned long long>(frequency),
+                      static_cast<unsigned long long>(get_buffer_count_.load(std::memory_order_relaxed)),
+                      static_cast<unsigned long long>(release_buffer_count_.load(std::memory_order_relaxed)),
+                      static_cast<unsigned long long>(total_submitted_frames_.load(std::memory_order_relaxed)),
+                      static_cast<unsigned long long>(get_buffer_failures_.load(std::memory_order_relaxed)),
+                      static_cast<unsigned long long>(release_buffer_failures_.load(std::memory_order_relaxed)),
+                      static_cast<unsigned long>(last_get_buffer_hr_.load(std::memory_order_relaxed)),
+                      static_cast<unsigned long>(last_release_buffer_hr_.load(std::memory_order_relaxed)),
+                      static_cast<unsigned long long>(last_callback_qpc_.load(std::memory_order_relaxed)),
+                      static_cast<unsigned long long>(last_non_silent_qpc_.load(std::memory_order_relaxed)));
             last_status = now;
         }
 
@@ -1273,16 +1373,27 @@ void SpatialRenderStream::WatchdogLoop()
         observation.playback_measurement_valid = SUCCEEDED(position_hr);
         observation.playback_position = position;
         observation.last_non_silent_ticks = last_non_silent_qpc_.load(std::memory_order_acquire);
-        observation.last_buffer_operation_ticks = last_buffer_operation_qpc_.load(std::memory_order_acquire);
+        observation.last_buffer_operation_ticks = last_callback_qpc_.load(std::memory_order_acquire);
+        observation.callback_count = release_buffer_count_.load(std::memory_order_acquire);
         observation.buffer_operations_expected = observation.started && event_handle_ != nullptr;
 
         const StallTransition transition = detector.Observe(observation);
-        if (transition == StallTransition::Suspected) {
-            Log::Error("SUSPECTED_AUDIO_STALL observation_only=1 stream=%p timeout_ms=%d position=%llu padding=%u last_non_silent_qpc=%llu last_buffer_qpc=%llu",
+        if (transition == StallTransition::SuspectedClockStallWithSubmissions) {
+            Log::Error("SUSPECTED_CLOCK_STALL_WITH_SUBMISSIONS observation_only=1 stream=%p timeout_ms=%d position=%llu padding=%u callbacks=%llu last_non_silent_qpc=%llu last_callback_qpc=%llu",
                        this,
                        g_config.watchdog_stall_timeout_ms,
                        static_cast<unsigned long long>(position),
                        padding,
+                       static_cast<unsigned long long>(observation.callback_count),
+                       static_cast<unsigned long long>(observation.last_non_silent_ticks),
+                       static_cast<unsigned long long>(observation.last_buffer_operation_ticks));
+        } else if (transition == StallTransition::SuspectedRenderCallbackStarvation) {
+            Log::Error("SUSPECTED_RENDER_CALLBACK_STARVATION observation_only=1 stream=%p timeout_ms=%d position=%llu padding=%u callbacks=%llu last_non_silent_qpc=%llu last_callback_qpc=%llu",
+                       this,
+                       g_config.watchdog_stall_timeout_ms,
+                       static_cast<unsigned long long>(position),
+                       padding,
+                       static_cast<unsigned long long>(observation.callback_count),
                        static_cast<unsigned long long>(observation.last_non_silent_ticks),
                        static_cast<unsigned long long>(observation.last_buffer_operation_ticks));
         } else if (transition == StallTransition::Cleared) {
@@ -1461,6 +1572,13 @@ HRESULT STDMETHODCALLTYPE SpatialAudioWrapper::ActivateSpatialAudioStream(const 
         return E_POINTER;
     }
     *out = nullptr;
+
+    if (g_teardown_requested.load(std::memory_order_acquire)) {
+        const HRESULT hr = passthrough_ ? passthrough_->ActivateSpatialAudioStream(prop, riid, out) : E_ABORT;
+        Log::Warn("ISpatialAudioClient::ActivateSpatialAudioStream teardown_passthrough result=0x%08lX stream=%p",
+                  static_cast<unsigned long>(hr), out ? *out : nullptr);
+        return hr;
+    }
 
     if (!IsEqualIID(riid, IID_ISpatialAudioObjectRenderStream)) {
         const HRESULT hr = passthrough_ ? passthrough_->ActivateSpatialAudioStream(prop, riid, out) : E_NOINTERFACE;
@@ -1960,18 +2078,79 @@ private:
 
 EndpointNotificationLogger g_endpoint_notification_logger;
 
-void RegisterEndpointNotifications(IMMDeviceEnumerator* enumerator)
+void RegisterEndpointNotificationsFromReturnedInterface(void* returned_interface)
 {
-    if (!enumerator || !Log::Enabled() || g_registered_endpoint_notifications.exchange(true)) {
+    if (!returned_interface) {
         return;
     }
+
+    IMMDeviceEnumerator* enumerator = nullptr;
+    const HRESULT query_hr = reinterpret_cast<IUnknown*>(returned_interface)->QueryInterface(
+        IID_IMMDeviceEnumerator,
+        reinterpret_cast<void**>(&enumerator)
+    );
+    Log::Info("Endpoint notification QueryInterface IID_IMMDeviceEnumerator result=0x%08lX requested_interface=%p enumerator=%p",
+              static_cast<unsigned long>(query_hr), returned_interface, enumerator);
+    if (FAILED(query_hr) || !enumerator) {
+        if (enumerator) {
+            enumerator->Release();
+        }
+        return;
+    }
+
+    HookIMMDeviceEnumerator(enumerator);
+    if (!Log::Enabled() || !g_self_reference || g_teardown_requested.load(std::memory_order_acquire)) {
+        if (Log::Enabled() && !g_self_reference) {
+            Log::Error("Endpoint notification registration refused because DLL self-reference is unavailable");
+        }
+        enumerator->Release();
+        return;
+    }
+    AcquireSRWLockExclusive(&g_endpoint_registration_lock);
+    if (g_endpoint_registration_claimed || g_teardown_requested.load(std::memory_order_acquire)) {
+        ReleaseSRWLockExclusive(&g_endpoint_registration_lock);
+        enumerator->Release();
+        return;
+    }
+    g_endpoint_registration_claimed = true;
+
     const HRESULT hr = enumerator->RegisterEndpointNotificationCallback(&g_endpoint_notification_logger);
     Log::Info("IMMDeviceEnumerator::RegisterEndpointNotificationCallback result=0x%08lX callback=%p",
               static_cast<unsigned long>(hr), &g_endpoint_notification_logger);
     if (FAILED(hr)) {
-        g_registered_endpoint_notifications = false;
+        g_endpoint_registration_claimed = false;
+        ReleaseSRWLockExclusive(&g_endpoint_registration_lock);
+        enumerator->Release();
         Log::Error("Device notification registration failed result=0x%08lX", static_cast<unsigned long>(hr));
+        return;
     }
+
+    g_retained_endpoint_enumerator = enumerator;
+    ReleaseSRWLockExclusive(&g_endpoint_registration_lock);
+    Log::Info("Endpoint notification enumerator retained enumerator=%p ownership=query_interface_reference", enumerator);
+}
+
+void UnregisterEndpointNotifications()
+{
+    AcquireSRWLockExclusive(&g_endpoint_registration_lock);
+    IMMDeviceEnumerator* enumerator = g_retained_endpoint_enumerator;
+    g_retained_endpoint_enumerator = nullptr;
+    g_endpoint_registration_claimed = false;
+    ReleaseSRWLockExclusive(&g_endpoint_registration_lock);
+
+    if (!enumerator) {
+        Log::Info("Endpoint notification unregistration skipped registered=0");
+        return;
+    }
+
+    const HRESULT hr = enumerator->UnregisterEndpointNotificationCallback(&g_endpoint_notification_logger);
+    Log::Info("IMMDeviceEnumerator::UnregisterEndpointNotificationCallback result=0x%08lX callback=%p enumerator=%p",
+              static_cast<unsigned long>(hr), &g_endpoint_notification_logger, enumerator);
+    if (FAILED(hr)) {
+        Log::Error("Device notification unregistration failed result=0x%08lX", static_cast<unsigned long>(hr));
+    }
+    enumerator->Release();
+    Log::Info("Endpoint notification enumerator released enumerator=%p", enumerator);
 }
 
 HRESULT WINAPI HookedCoCreateInstance(REFCLSID clsid, LPUNKNOWN outer, DWORD clsctx, REFIID iid, LPVOID* out)
@@ -1989,8 +2168,7 @@ HRESULT WINAPI HookedCoCreateInstance(REFCLSID clsid, LPUNKNOWN outer, DWORD cls
     }
 
     if (SUCCEEDED(result) && out && *out && IsEqualGUID(clsid, kClsidMMDeviceEnumerator)) {
-        HookIMMDeviceEnumerator(*out);
-        RegisterEndpointNotifications(static_cast<IMMDeviceEnumerator*>(*out));
+        RegisterEndpointNotificationsFromReturnedInterface(*out);
     }
 
     return result;
@@ -2030,8 +2208,59 @@ void HookCoCreateInstance()
     Log::Info("Hooked CoCreateInstance in %s", Narrow(kOle32).c_str());
 }
 
+[[noreturn]] void ControlledRuntimeTeardown(bool minhook_initialized)
+{
+    Log::Info("Controlled runtime teardown requested outside DllMain active_spatial_streams=%llu",
+              static_cast<unsigned long long>(g_active_spatial_streams.load(std::memory_order_acquire)));
+    while (g_active_spatial_streams.load(std::memory_order_acquire) != 0) {
+        Sleep(100);
+    }
+
+    UnregisterEndpointNotifications();
+
+    if (minhook_initialized) {
+        const MH_STATUS disable_status = MH_DisableHook(MH_ALL_HOOKS);
+        Log::Info("MH_DisableHook all during controlled teardown status=%d", static_cast<int>(disable_status));
+        const MH_STATUS uninitialize_status = MH_Uninitialize();
+        Log::Info("MH_Uninitialize during controlled teardown status=%d", static_cast<int>(uninitialize_status));
+    }
+
+    Log::Info("Logger shutdown beginning outside loader lock");
+    bool logger_stopped = Log::Shutdown(5000);
+    if (!logger_stopped) {
+        OutputDebugStringA("MetaphorAudioFix: logger shutdown exceeded 5 seconds; waiting outside loader lock before teardown can complete.\n");
+        logger_stopped = Log::Shutdown(INFINITE);
+    }
+
+    HANDLE shutdown_event = g_runtime_shutdown_event.exchange(nullptr, std::memory_order_acq_rel);
+    if (shutdown_event) {
+        CloseHandle(shutdown_event);
+    }
+
+    if (!logger_stopped) {
+        OutputDebugStringA("MetaphorAudioFix: controlled teardown refused DLL unload because logger termination was not confirmed.\n");
+        ExitThread(1);
+    }
+
+    OutputDebugStringA("MetaphorAudioFix: controlled teardown complete; DLL self-reference retained until process exit.\n");
+    ExitThread(0);
+}
+
 DWORD WINAPI MainThread(void*)
 {
+    if (!GetModuleHandleExW(
+            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+            reinterpret_cast<LPCWSTR>(&MainThread),
+            &g_self_reference)) {
+        OutputDebugStringA("MetaphorAudioFix: failed to retain DLL self-reference; diagnostics bootstrap aborted.\n");
+        return 0;
+    }
+    g_runtime_shutdown_event.store(CreateEventW(nullptr, TRUE, FALSE, nullptr), std::memory_order_release);
+    if (!g_runtime_shutdown_event.load(std::memory_order_acquire)) {
+        OutputDebugStringA("MetaphorAudioFix: failed to create controlled-shutdown event; diagnostics bootstrap aborted.\n");
+        FreeLibraryAndExitThread(g_self_reference, 1);
+    }
+
     const std::wstring module_path = GetModuleFileNameString(g_this_module);
     g_module_dir = std::filesystem::path(module_path).parent_path();
 
@@ -2077,53 +2306,75 @@ DWORD WINAPI MainThread(void*)
               g_config.watchdog_non_silent_window_ms,
               g_config.watchdog_buffer_activity_window_ms,
               g_config.diagnostics_periodic_status_ms);
+    Log::Info("Config: detailed_buffer_logging=%d buffer_log_sample_rate=%d error_reminder_ms=%d",
+              g_config.diagnostics_detailed_buffer_logging,
+              g_config.diagnostics_buffer_log_sample_rate,
+              g_config.diagnostics_error_reminder_ms);
     Log::Info("Config: module_poll_timeout_ms=%d module_poll_interval_ms=%d",
               g_config.module_poll_timeout_ms,
               g_config.module_poll_interval_ms);
 
     const MH_STATUS init_status = MH_Initialize();
-    if (init_status != MH_OK && init_status != MH_ERROR_ALREADY_INITIALIZED) {
+    const bool minhook_initialized = init_status == MH_OK || init_status == MH_ERROR_ALREADY_INITIALIZED;
+    if (!minhook_initialized) {
         Log::Error("MH_Initialize failed: %d", static_cast<int>(init_status));
-        return 0;
-    }
-
-    const int timeout_ms = g_config.module_poll_timeout_ms;
-    const int interval_ms = g_config.module_poll_interval_ms;
-    int elapsed_ms = 0;
-    while (timeout_ms == 0 || elapsed_ms <= timeout_ms) {
-        HookCoCreateInstance();
-
-        if (g_config.xaudio2_enabled) {
-            HookXAudio2Export(kXAudio27.data(), true);
-            HookXAudio2Export(kXAudio28.data(), false);
-            HookXAudio2Export(kXAudio29.data(), false);
-            HookXAudio2Export(kXAudio29Redist.data(), false);
-        }
-
-        static bool logged_wasapi_activity = false;
-        if (g_saw_wasapi_activity.load() && !logged_wasapi_activity) {
-            Log::Info("Observed WASAPI activity");
-            logged_wasapi_activity = true;
-        }
-
-        if (g_hooked_xaudio2_modern.load() || g_hooked_xaudio2_27.load()) {
-            Log::Info("At least one XAudio2 module is hooked");
-            return 0;
-        }
-
-        Sleep(interval_ms);
-        elapsed_ms += interval_ms;
-    }
-
-    if (!g_config.xaudio2_enabled && !g_config.wasapi_enabled) {
-        Log::Warn("No audio hooks are enabled in config");
-    } else if (g_config.xaudio2_enabled && !g_hooked_xaudio2_modern.load() && !g_hooked_xaudio2_27.load() && !g_saw_wasapi_activity.load()) {
-        Log::Warn("Timed out waiting for XAudio2 or WASAPI activity");
     } else {
-        Log::Info("Bootstrap loop ended without additional audio activity");
+        const int timeout_ms = g_config.module_poll_timeout_ms;
+        const int interval_ms = g_config.module_poll_interval_ms;
+        int elapsed_ms = 0;
+        while (timeout_ms == 0 || elapsed_ms <= timeout_ms) {
+            HookCoCreateInstance();
+
+            if (g_config.xaudio2_enabled) {
+                HookXAudio2Export(kXAudio27.data(), true);
+                HookXAudio2Export(kXAudio28.data(), false);
+                HookXAudio2Export(kXAudio29.data(), false);
+                HookXAudio2Export(kXAudio29Redist.data(), false);
+            }
+
+            static bool logged_wasapi_activity = false;
+            if (g_saw_wasapi_activity.load() && !logged_wasapi_activity) {
+                Log::Info("Observed WASAPI activity");
+                logged_wasapi_activity = true;
+            }
+
+            if (g_hooked_xaudio2_modern.load() || g_hooked_xaudio2_27.load()) {
+                Log::Info("At least one XAudio2 module is hooked");
+                break;
+            }
+
+            Sleep(interval_ms);
+            elapsed_ms += interval_ms;
+        }
+
+        if (!g_config.xaudio2_enabled && !g_config.wasapi_enabled) {
+            Log::Warn("No audio hooks are enabled in config");
+        } else if (g_config.xaudio2_enabled && !g_hooked_xaudio2_modern.load() && !g_hooked_xaudio2_27.load() && !g_saw_wasapi_activity.load()) {
+            Log::Warn("Timed out waiting for XAudio2 or WASAPI activity");
+        } else if (!g_hooked_xaudio2_modern.load() && !g_hooked_xaudio2_27.load()) {
+            Log::Info("Bootstrap loop ended without additional audio activity");
+        }
     }
+
+    Log::Info("Runtime coordinator waiting for explicit controlled-shutdown request");
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_NORMAL);
+    const DWORD wait_result = WaitForSingleObject(g_runtime_shutdown_event.load(std::memory_order_acquire), INFINITE);
+    if (wait_result == WAIT_OBJECT_0) {
+        ControlledRuntimeTeardown(minhook_initialized);
+    }
+    Log::Error("Runtime coordinator shutdown wait failed result=%lu win32_error=%lu", wait_result, GetLastError());
     return 0;
 }
+}
+
+extern "C" __declspec(dllexport) BOOL WINAPI RequestMetaphorAudioFixDiagnosticShutdown()
+{
+    HANDLE shutdown_event = g_runtime_shutdown_event.load(std::memory_order_acquire);
+    if (!shutdown_event) {
+        return FALSE;
+    }
+    g_teardown_requested.store(true, std::memory_order_release);
+    return SetEvent(shutdown_event);
 }
 
 BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID)
@@ -2144,8 +2395,6 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID)
             ResumeThread(thread);
             CloseHandle(thread);
         }
-    } else if (reason == DLL_PROCESS_DETACH) {
-        Log::Shutdown();
     }
 
     return TRUE;

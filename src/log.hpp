@@ -8,5 +8,6 @@ bool Enabled();
 void Info(const char* fmt, ...);
 void Warn(const char* fmt, ...);
 void Error(const char* fmt, ...);
-void Shutdown();
+bool Shutdown(DWORD timeout_ms = 5000);
+bool ShutdownComplete();
 }

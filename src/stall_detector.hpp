@@ -15,14 +15,18 @@ struct StallObservation {
     std::uint64_t playback_position = 0;
     std::uint64_t last_non_silent_ticks = 0;
     std::uint64_t last_buffer_operation_ticks = 0;
+    std::uint64_t callback_count = 0;
     bool buffer_operations_expected = false;
 };
 
 enum class StallTransition {
     None,
-    Suspected,
+    SuspectedClockStallWithSubmissions,
+    SuspectedRenderCallbackStarvation,
     Cleared,
 };
+
+bool StartedStateAfterStartResult(bool previously_started, std::int32_t start_hresult);
 
 class StallDetector {
 public:
@@ -30,14 +34,22 @@ public:
 
     StallTransition Observe(const StallObservation& observation);
     void Reset();
-    bool IsSuspected() const { return suspected_; }
+    bool IsSuspected() const { return condition_ != Condition::None; }
 
 private:
+    enum class Condition {
+        None,
+        ClockStallWithSubmissions,
+        RenderCallbackStarvation,
+    };
+
     static bool IsRecent(std::uint64_t now, std::uint64_t then, std::uint64_t window);
 
     StallDetectorConfig config_{};
     bool have_position_ = false;
-    bool suspected_ = false;
+    bool active_non_silent_latched_ = false;
     std::uint64_t last_position_ = 0;
     std::uint64_t last_progress_ticks_ = 0;
+    std::uint64_t callback_count_at_progress_ = 0;
+    Condition condition_ = Condition::None;
 };

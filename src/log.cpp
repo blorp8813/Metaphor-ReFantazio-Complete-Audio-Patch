@@ -22,6 +22,7 @@ struct Entry {
 struct LoggerState {
     std::atomic<bool> enabled{false};
     std::atomic<bool> stopping{false};
+    std::atomic<bool> writer_terminated{false};
     std::atomic<std::uint64_t> dropped{0};
     SRWLOCK queue_lock = SRWLOCK_INIT;
     Entry queue[kQueueCapacity]{};
@@ -188,6 +189,7 @@ DWORD WINAPI WriterThread(void*)
         CloseHandle(g_state.file);
         g_state.file = INVALID_HANDLE_VALUE;
     }
+    g_state.writer_terminated.store(true, std::memory_order_release);
     return 0;
 }
 
@@ -233,6 +235,8 @@ void Init(const std::filesystem::path& path, bool enabled, std::uint64_t max_byt
     }
 
     g_state.path = path;
+    g_state.stopping = false;
+    g_state.writer_terminated = false;
     g_state.max_bytes = max_bytes;
     g_state.max_files = std::max(1, max_files);
     QueryPerformanceFrequency(&g_state.qpc_frequency);
@@ -283,17 +287,24 @@ void Error(const char* format, ...)
     va_end(args);
 }
 
-void Shutdown()
+bool Shutdown(DWORD timeout_ms)
 {
-    if (!g_state.enabled.exchange(false, std::memory_order_acq_rel)) {
-        return;
+    const bool was_enabled = g_state.enabled.exchange(false, std::memory_order_acq_rel);
+    if (!was_enabled && !g_state.thread) {
+        return ShutdownComplete();
     }
-    g_state.stopping = true;
-    if (g_state.wake_event) {
-        SetEvent(g_state.wake_event);
+    if (was_enabled) {
+        g_state.stopping = true;
+        if (g_state.wake_event) {
+            SetEvent(g_state.wake_event);
+        }
     }
     if (g_state.thread) {
-        WaitForSingleObject(g_state.thread, 1000);
+        const DWORD wait_result = WaitForSingleObject(g_state.thread, timeout_ms);
+        if (wait_result != WAIT_OBJECT_0 || !g_state.writer_terminated.load(std::memory_order_acquire)) {
+            OutputDebugStringA("MetaphorAudioFix: logger writer did not terminate; handles retained and DLL unload must be refused.\n");
+            return false;
+        }
         CloseHandle(g_state.thread);
         g_state.thread = nullptr;
     }
@@ -301,5 +312,13 @@ void Shutdown()
         CloseHandle(g_state.wake_event);
         g_state.wake_event = nullptr;
     }
+    return ShutdownComplete();
+}
+
+bool ShutdownComplete()
+{
+    return g_state.thread == nullptr &&
+           g_state.wake_event == nullptr &&
+           g_state.file == INVALID_HANDLE_VALUE;
 }
 }

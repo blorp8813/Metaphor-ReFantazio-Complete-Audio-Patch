@@ -23,6 +23,9 @@ struct Config {
     int watchdog_non_silent_window_ms = 750;
     int watchdog_buffer_activity_window_ms = 750;
     int diagnostics_periodic_status_ms = 1000;
+    bool diagnostics_detailed_buffer_logging = false;
+    int diagnostics_buffer_log_sample_rate = 100;
+    int diagnostics_error_reminder_ms = 30000;
     int module_poll_timeout_ms = 120000;
     int module_poll_interval_ms = 250;
 };

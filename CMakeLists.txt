@@ -138,6 +138,27 @@ add_executable(stall_detector_tests
     tests/stall_detector_tests.cpp
 )
 
+add_executable(logger_shutdown_tests
+    src/log.cpp
+    tests/logger_shutdown.cpp
+)
+
+target_include_directories(logger_shutdown_tests PRIVATE src)
+
+target_compile_definitions(logger_shutdown_tests PRIVATE
+    NOMINMAX
+    UNICODE
+    _UNICODE
+    WIN32_LEAN_AND_MEAN
+    _WIN32_WINNT=0x0A00
+    WINVER=0x0A00
+)
+
+target_link_options(logger_shutdown_tests PRIVATE
+    -static-libgcc
+    -static-libstdc++
+)
+
 target_include_directories(stall_detector_tests PRIVATE src)
 
 target_link_options(stall_detector_tests PRIVATE
@@ -166,6 +187,11 @@ set_target_properties(smoke_xaudio2 PROPERTIES
 
 set_target_properties(stall_detector_tests PROPERTIES
     OUTPUT_NAME "stall_detector_tests"
+    SUFFIX ".exe"
+)
+
+set_target_properties(logger_shutdown_tests PROPERTIES
+    OUTPUT_NAME "logger_shutdown_tests"
     SUFFIX ".exe"
 )
 
