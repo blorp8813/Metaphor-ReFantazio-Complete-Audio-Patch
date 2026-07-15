@@ -32,6 +32,15 @@ That produces:
 - `build/windows/package/winmm.dll`
 - `build/windows/package/Ultimate-ASI-Loader-LICENSE.txt`
 
+Run the platform-independent stall-detector tests on macOS with:
+
+```bash
+./tests/run-host-tests.sh
+```
+
+The diagnostic branch behavior and INI options are documented in
+[`docs/DIAGNOSTIC_BUILD.md`](docs/DIAGNOSTIC_BUILD.md).
+
 ## Install
 
 The packaged fix now includes a bundled `winmm.dll` ASI loader, so all required files ship together.
