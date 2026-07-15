@@ -14,6 +14,15 @@ struct Config {
     bool reject_multichannel_is_format_supported = true;
     bool reject_multichannel_initialize = true;
     bool spatial_wrapper_enabled = true;
+    bool diagnostics_enabled = false;
+    std::filesystem::path diagnostics_log_path;
+    int diagnostics_max_log_size_mb = 16;
+    int diagnostics_max_log_files = 3;
+    int watchdog_stall_timeout_ms = 2000;
+    int watchdog_poll_interval_ms = 250;
+    int watchdog_non_silent_window_ms = 750;
+    int watchdog_buffer_activity_window_ms = 750;
+    int diagnostics_periodic_status_ms = 1000;
     int module_poll_timeout_ms = 120000;
     int module_poll_interval_ms = 250;
 };

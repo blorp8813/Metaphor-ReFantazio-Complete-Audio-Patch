@@ -90,6 +90,7 @@ add_library(MetaphorAudioFix SHARED
     src/config.cpp
     src/dllmain.cpp
     src/log.cpp
+    src/stall_detector.cpp
     external-minhook/src/buffer.c
     external-minhook/src/hde/hde64.c
     external-minhook/src/hook.c
@@ -132,6 +133,18 @@ set_target_properties(MetaphorAudioFix PROPERTIES
 
 add_executable(smoke_xaudio2 tests/smoke_xaudio2.cpp)
 
+add_executable(stall_detector_tests
+    src/stall_detector.cpp
+    tests/stall_detector_tests.cpp
+)
+
+target_include_directories(stall_detector_tests PRIVATE src)
+
+target_link_options(stall_detector_tests PRIVATE
+    -static-libgcc
+    -static-libstdc++
+)
+
 target_compile_definitions(smoke_xaudio2 PRIVATE
     NOMINMAX
     UNICODE
@@ -148,6 +161,11 @@ target_link_options(smoke_xaudio2 PRIVATE
 
 set_target_properties(smoke_xaudio2 PROPERTIES
     OUTPUT_NAME "smoke_xaudio2"
+    SUFFIX ".exe"
+)
+
+set_target_properties(stall_detector_tests PROPERTIES
+    OUTPUT_NAME "stall_detector_tests"
     SUFFIX ".exe"
 )
 

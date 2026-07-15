@@ -112,6 +112,26 @@ Config LoadConfig(const std::filesystem::path& path)
             if (key == "wrapperenabled") {
                 config.spatial_wrapper_enabled = ParseBool(value, config.spatial_wrapper_enabled);
             }
+        } else if (current_section == "diagnostics") {
+            if (key == "enabled") {
+                config.diagnostics_enabled = ParseBool(value, config.diagnostics_enabled);
+            } else if (key == "logpath") {
+                config.diagnostics_log_path = std::filesystem::path(Trim(value));
+            } else if (key == "maxlogsizemb") {
+                config.diagnostics_max_log_size_mb = ParseInt(value, config.diagnostics_max_log_size_mb);
+            } else if (key == "maxlogfiles") {
+                config.diagnostics_max_log_files = ParseInt(value, config.diagnostics_max_log_files);
+            } else if (key == "stalltimeoutms") {
+                config.watchdog_stall_timeout_ms = ParseInt(value, config.watchdog_stall_timeout_ms);
+            } else if (key == "watchdogpollintervalms") {
+                config.watchdog_poll_interval_ms = ParseInt(value, config.watchdog_poll_interval_ms);
+            } else if (key == "nonsilentwindowms") {
+                config.watchdog_non_silent_window_ms = ParseInt(value, config.watchdog_non_silent_window_ms);
+            } else if (key == "bufferactivitywindowms") {
+                config.watchdog_buffer_activity_window_ms = ParseInt(value, config.watchdog_buffer_activity_window_ms);
+            } else if (key == "periodicstatusms") {
+                config.diagnostics_periodic_status_ms = ParseInt(value, config.diagnostics_periodic_status_ms);
+            }
         } else if (current_section == "bootstrap") {
             if (key == "modulepolltimeoutms") {
                 config.module_poll_timeout_ms = ParseInt(value, config.module_poll_timeout_ms);
@@ -127,6 +147,13 @@ Config LoadConfig(const std::filesystem::path& path)
     if (config.module_poll_interval_ms < 50) {
         config.module_poll_interval_ms = 50;
     }
+    config.diagnostics_max_log_size_mb = std::clamp(config.diagnostics_max_log_size_mb, 1, 1024);
+    config.diagnostics_max_log_files = std::clamp(config.diagnostics_max_log_files, 1, 16);
+    config.watchdog_stall_timeout_ms = std::clamp(config.watchdog_stall_timeout_ms, 250, 60000);
+    config.watchdog_poll_interval_ms = std::clamp(config.watchdog_poll_interval_ms, 50, 5000);
+    config.watchdog_non_silent_window_ms = std::clamp(config.watchdog_non_silent_window_ms, 100, 60000);
+    config.watchdog_buffer_activity_window_ms = std::clamp(config.watchdog_buffer_activity_window_ms, 100, 60000);
+    config.diagnostics_periodic_status_ms = std::clamp(config.diagnostics_periodic_status_ms, 100, 60000);
 
     return config;
 }

@@ -2,6 +2,7 @@
 
 #include "config.hpp"
 #include "log.hpp"
+#include "stall_detector.hpp"
 
 #include <MinHook.h>
 
@@ -89,6 +90,20 @@ std::atomic<bool> g_hooked_audio_client_initialize = false;
 std::atomic<bool> g_hooked_audio_client_is_format_supported = false;
 std::atomic<bool> g_hooked_audio_client_get_mix_format = false;
 std::atomic<bool> g_saw_wasapi_activity = false;
+std::atomic<bool> g_registered_endpoint_notifications = false;
+LARGE_INTEGER g_qpc_frequency{};
+
+std::uint64_t QpcNow()
+{
+    LARGE_INTEGER value{};
+    QueryPerformanceCounter(&value);
+    return static_cast<std::uint64_t>(value.QuadPart);
+}
+
+std::uint64_t MillisecondsToQpc(int milliseconds)
+{
+    return static_cast<std::uint64_t>(milliseconds) * static_cast<std::uint64_t>(g_qpc_frequency.QuadPart) / 1000ULL;
+}
 
 std::string Narrow(const std::wstring_view value)
 {
@@ -656,13 +671,18 @@ public:
     HRESULT STDMETHODCALLTYPE BeginUpdatingAudioObjects(UINT32* dynamic_count, UINT32* frames) override;
     HRESULT STDMETHODCALLTYPE EndUpdatingAudioObjects() override;
     HRESULT STDMETHODCALLTYPE ActivateSpatialAudioObject(AudioObjectType type, ISpatialAudioObject** out) override;
-    void MixToStereo();
+    bool MixToStereo();
+    void StartWatchdog();
+    void StopWatchdog();
+    static DWORD WINAPI WatchdogThread(void* context);
+    void WatchdogLoop();
 
     std::atomic<ULONG> ref_{1};
     CRITICAL_SECTION lock_{};
     SpatialAudioWrapper* owner_ = nullptr;
     IAudioClient* audio_client_ = nullptr;
     IAudioRenderClient* render_client_ = nullptr;
+    IAudioClock* audio_clock_ = nullptr;
     ISpatialAudioObjectRenderStreamNotify* notify_ = nullptr;
     HANDLE event_handle_ = nullptr;
     AudioObjectType static_mask_ = AudioObjectType_None;
@@ -672,6 +692,11 @@ public:
     WAVEFORMATEX* object_format_ = nullptr;
     WAVEFORMATEXTENSIBLE output_format_{};
     std::list<SpatialRenderObject*> objects_;
+    HANDLE watchdog_stop_event_ = nullptr;
+    HANDLE watchdog_thread_ = nullptr;
+    std::atomic<bool> started_{false};
+    std::atomic<std::uint64_t> last_non_silent_qpc_{0};
+    std::atomic<std::uint64_t> last_buffer_operation_qpc_{0};
 
     friend class SpatialRenderObject;
 };
@@ -818,6 +843,12 @@ SpatialRenderStream::SpatialRenderStream(SpatialAudioWrapper* owner, const Spati
       object_format_(AllocateWaveFormatCopy(params.ObjectFormat))
 {
     InitializeCriticalSection(&lock_);
+    Log::Info("SpatialRenderStream created stream=%p event_handle=%p notify=%p static_mask=0x%08lX object_format=%s",
+              this,
+              event_handle_,
+              notify_,
+              static_cast<unsigned long>(static_mask_),
+              DescribeWaveFormat(object_format_).c_str());
     if (owner_) {
         owner_->AddRef();
     }
@@ -828,11 +859,16 @@ SpatialRenderStream::SpatialRenderStream(SpatialAudioWrapper* owner, const Spati
 
 SpatialRenderStream::~SpatialRenderStream()
 {
+    Log::Info("SpatialRenderStream destroying stream=%p", this);
+    StopWatchdog();
     if (audio_client_) {
-        audio_client_->Stop();
+        const HRESULT hr = audio_client_->Stop();
+        Log::Info("IAudioClient::Stop stream=%p reason=destructor result=0x%08lX", this, static_cast<unsigned long>(hr));
     }
     if (render_client_ && update_frames_ != ~0u && update_frames_ > 0) {
-        render_client_->ReleaseBuffer(update_frames_, 0);
+        const HRESULT hr = render_client_->ReleaseBuffer(update_frames_, 0);
+        Log::Info("IAudioRenderClient::ReleaseBuffer stream=%p reason=destructor frames=%u flags=0 result=0x%08lX",
+                  this, update_frames_, static_cast<unsigned long>(hr));
     }
 
     for (SpatialRenderObject* object : objects_) {
@@ -846,6 +882,9 @@ SpatialRenderStream::~SpatialRenderStream()
     }
     if (render_client_) {
         render_client_->Release();
+    }
+    if (audio_clock_) {
+        audio_clock_->Release();
     }
     if (audio_client_) {
         audio_client_->Release();
@@ -867,12 +906,18 @@ void SpatialRenderStream::RemoveObject(SpatialRenderObject* object)
 HRESULT SpatialRenderStream::ActivateOutput()
 {
     if (!owner_ || !owner_->Device() || !g_immdevice_activate || !event_handle_) {
+        Log::Error("Spatial output activation precondition failed stream=%p owner=%p device=%p activate=%p event=%p",
+                   this, owner_, owner_ ? owner_->Device() : nullptr, g_immdevice_activate, event_handle_);
         return E_FAIL;
     }
 
     void* raw_audio_client = nullptr;
     HRESULT hr = g_immdevice_activate(owner_->Device(), kIidIAudioClient, CLSCTX_INPROC_SERVER, nullptr, &raw_audio_client);
+    Log::Info("IMMDevice::Activate internal IAudioClient stream=%p result=0x%08lX client=%p",
+              this, static_cast<unsigned long>(hr), raw_audio_client);
     if (FAILED(hr) || !raw_audio_client) {
+        Log::Error("IMMDevice::Activate internal IAudioClient failed stream=%p result=0x%08lX client=%p",
+                   this, static_cast<unsigned long>(hr), raw_audio_client);
         return FAILED(hr) ? hr : E_FAIL;
     }
 
@@ -880,24 +925,60 @@ HRESULT SpatialRenderStream::ActivateOutput()
 
     REFERENCE_TIME default_period = 0;
     hr = audio_client_->GetDevicePeriod(&default_period, nullptr);
+    Log::Info("IAudioClient::GetDevicePeriod stream=%p result=0x%08lX default_period=%lld",
+              this, static_cast<unsigned long>(hr), static_cast<long long>(default_period));
     if (FAILED(hr) || default_period <= 0) {
+        Log::Warn("IAudioClient::GetDevicePeriod fallback stream=%p result=0x%08lX fallback=%lld",
+                  this, static_cast<unsigned long>(hr), static_cast<long long>(kSpatialDefaultPeriod));
         default_period = kSpatialDefaultPeriod;
     }
 
     BuildStereoFloatFormat(output_format_, object_format_ ? object_format_->nSamplesPerSec : 48000);
     hr = audio_client_->Initialize(AUDCLNT_SHAREMODE_SHARED, kSpatialStreamFlags, default_period, 0, &output_format_.Format, nullptr);
+    Log::Info("IAudioClient::Initialize internal stream=%p result=0x%08lX mode=shared flags=0x%08lX buffer=%lld periodicity=0 format=%s",
+              this,
+              static_cast<unsigned long>(hr),
+              static_cast<unsigned long>(kSpatialStreamFlags),
+              static_cast<long long>(default_period),
+              DescribeWaveFormat(&output_format_.Format).c_str());
     if (FAILED(hr)) {
+        Log::Error("IAudioClient::Initialize internal failed stream=%p result=0x%08lX", this, static_cast<unsigned long>(hr));
         return hr;
     }
 
     hr = audio_client_->SetEventHandle(event_handle_);
+    Log::Info("IAudioClient::SetEventHandle stream=%p event=%p result=0x%08lX",
+              this, event_handle_, static_cast<unsigned long>(hr));
     if (FAILED(hr)) {
+        Log::Error("IAudioClient::SetEventHandle failed stream=%p result=0x%08lX", this, static_cast<unsigned long>(hr));
         return hr;
     }
 
     hr = audio_client_->GetService(IID_IAudioRenderClient, reinterpret_cast<void**>(&render_client_));
+    Log::Info("IAudioClient::GetService IAudioRenderClient stream=%p result=0x%08lX service=%p",
+              this, static_cast<unsigned long>(hr), render_client_);
     if (FAILED(hr) || !render_client_) {
+        Log::Error("IAudioClient::GetService IAudioRenderClient failed stream=%p result=0x%08lX service=%p",
+                   this, static_cast<unsigned long>(hr), render_client_);
         return FAILED(hr) ? hr : E_FAIL;
+    }
+
+    hr = audio_client_->GetService(IID_IAudioClock, reinterpret_cast<void**>(&audio_clock_));
+    Log::Info("IAudioClient::GetService IAudioClock stream=%p result=0x%08lX service=%p",
+              this, static_cast<unsigned long>(hr), audio_clock_);
+    if (FAILED(hr) || !audio_clock_) {
+        audio_clock_ = nullptr;
+        Log::Warn("IAudioClock unavailable; watchdog cannot declare a playback stall stream=%p result=0x%08lX",
+                  this, static_cast<unsigned long>(hr));
+    } else {
+        UINT64 frequency = 0;
+        const HRESULT frequency_hr = audio_clock_->GetFrequency(&frequency);
+        Log::Info("IAudioClock::GetFrequency stream=%p result=0x%08lX frequency=%llu",
+                  this, static_cast<unsigned long>(frequency_hr), static_cast<unsigned long long>(frequency));
+        if (FAILED(frequency_hr)) {
+            Log::Error("IAudioClock::GetFrequency failed stream=%p result=0x%08lX", this,
+                       static_cast<unsigned long>(frequency_hr));
+        }
     }
 
     period_frames_ = static_cast<UINT32>(MulDiv(default_period, output_format_.Format.nSamplesPerSec, 10000000));
@@ -905,15 +986,18 @@ HRESULT SpatialRenderStream::ActivateOutput()
         period_frames_ = 1;
     }
     update_frames_ = ~0u;
+    StartWatchdog();
+    Log::Info("Spatial output activated stream=%p period_frames=%u", this, period_frames_);
     return S_OK;
 }
 
-void SpatialRenderStream::MixToStereo()
+bool SpatialRenderStream::MixToStereo()
 {
     if (!render_buffer_) {
-        return;
+        return false;
     }
 
+    bool non_silent = false;
     std::fill(render_buffer_, render_buffer_ + static_cast<size_t>(update_frames_) * 2, 0.0f);
     for (SpatialRenderObject* object : objects_) {
         const StereoMixCoefficients gains = GetStereoMixCoefficients(object->Type());
@@ -923,10 +1007,12 @@ void SpatialRenderStream::MixToStereo()
 
         const auto& samples = object->Samples();
         for (UINT32 index = 0; index < update_frames_; ++index) {
+            non_silent = non_silent || std::fabs(samples[index]) > 0.000001f;
             render_buffer_[index * 2] += samples[index] * gains.left;
             render_buffer_[index * 2 + 1] += samples[index] * gains.right;
         }
     }
+    return non_silent;
 }
 
 HRESULT STDMETHODCALLTYPE SpatialRenderStream::QueryInterface(REFIID riid, void** out)
@@ -978,37 +1064,70 @@ HRESULT STDMETHODCALLTYPE SpatialRenderStream::GetService(REFIID, void** service
 
 HRESULT STDMETHODCALLTYPE SpatialRenderStream::Start()
 {
-    return audio_client_ ? audio_client_->Start() : E_FAIL;
+    const HRESULT hr = audio_client_ ? audio_client_->Start() : E_FAIL;
+    started_.store(SUCCEEDED(hr), std::memory_order_release);
+    Log::Info("IAudioClient::Start stream=%p result=0x%08lX started=%d",
+              this, static_cast<unsigned long>(hr), SUCCEEDED(hr));
+    if (FAILED(hr)) {
+        Log::Error("IAudioClient::Start failed stream=%p result=0x%08lX", this, static_cast<unsigned long>(hr));
+    }
+    return hr;
 }
 
 HRESULT STDMETHODCALLTYPE SpatialRenderStream::Stop()
 {
-    return audio_client_ ? audio_client_->Stop() : E_FAIL;
+    const HRESULT hr = audio_client_ ? audio_client_->Stop() : E_FAIL;
+    if (SUCCEEDED(hr)) {
+        started_.store(false, std::memory_order_release);
+    }
+    Log::Info("IAudioClient::Stop stream=%p result=0x%08lX started=%d",
+              this, static_cast<unsigned long>(hr), started_.load());
+    if (FAILED(hr)) {
+        Log::Error("IAudioClient::Stop failed stream=%p result=0x%08lX", this, static_cast<unsigned long>(hr));
+    }
+    return hr;
 }
 
 HRESULT STDMETHODCALLTYPE SpatialRenderStream::Reset()
 {
-    return audio_client_ ? audio_client_->Reset() : E_FAIL;
+    const HRESULT hr = audio_client_ ? audio_client_->Reset() : E_FAIL;
+    if (SUCCEEDED(hr)) {
+        last_non_silent_qpc_ = 0;
+        last_buffer_operation_qpc_ = 0;
+    }
+    Log::Info("IAudioClient::Reset stream=%p result=0x%08lX", this, static_cast<unsigned long>(hr));
+    if (FAILED(hr)) {
+        Log::Error("IAudioClient::Reset failed stream=%p result=0x%08lX", this, static_cast<unsigned long>(hr));
+    }
+    return hr;
 }
 
 HRESULT STDMETHODCALLTYPE SpatialRenderStream::BeginUpdatingAudioObjects(UINT32* dynamic_count, UINT32* frames)
 {
     if (!dynamic_count || !frames || !render_client_) {
+        Log::Error("Audio event callback/BeginUpdatingAudioObjects invalid args stream=%p dynamic_count=%p frames=%p render_client=%p",
+                   this, dynamic_count, frames, render_client_);
         return E_POINTER;
     }
 
     EnterCriticalSection(&lock_);
     if (update_frames_ != ~0u) {
         LeaveCriticalSection(&lock_);
+        Log::Warn("Audio event callback/BeginUpdatingAudioObjects out of order stream=%p", this);
         return SPTLAUDCLNT_E_OUT_OF_ORDER;
     }
 
     update_frames_ = period_frames_;
     HRESULT hr = render_client_->GetBuffer(update_frames_, reinterpret_cast<BYTE**>(&render_buffer_));
+    last_buffer_operation_qpc_.store(QpcNow(), std::memory_order_release);
+    Log::Info("Audio event callback observed stream=%p event=%p IAudioRenderClient::GetBuffer frames=%u result=0x%08lX buffer=%p",
+              this, event_handle_, update_frames_, static_cast<unsigned long>(hr), render_buffer_);
     if (FAILED(hr)) {
         update_frames_ = ~0u;
         render_buffer_ = nullptr;
         LeaveCriticalSection(&lock_);
+        Log::Error("IAudioRenderClient::GetBuffer failed stream=%p frames=%u result=0x%08lX",
+                   this, period_frames_, static_cast<unsigned long>(hr));
         return hr;
     }
 
@@ -1025,21 +1144,152 @@ HRESULT STDMETHODCALLTYPE SpatialRenderStream::BeginUpdatingAudioObjects(UINT32*
 HRESULT STDMETHODCALLTYPE SpatialRenderStream::EndUpdatingAudioObjects()
 {
     if (!render_client_) {
+        Log::Error("IAudioRenderClient::ReleaseBuffer unavailable stream=%p", this);
         return E_FAIL;
     }
 
     EnterCriticalSection(&lock_);
     if (update_frames_ == ~0u) {
         LeaveCriticalSection(&lock_);
+        Log::Warn("IAudioRenderClient::ReleaseBuffer out of order stream=%p", this);
         return SPTLAUDCLNT_E_OUT_OF_ORDER;
     }
 
-    MixToStereo();
+    const bool non_silent = MixToStereo();
     const UINT32 frames = update_frames_;
     update_frames_ = ~0u;
     render_buffer_ = nullptr;
     LeaveCriticalSection(&lock_);
-    return render_client_->ReleaseBuffer(frames, 0);
+    const std::uint64_t now = QpcNow();
+    last_buffer_operation_qpc_.store(now, std::memory_order_release);
+    if (non_silent) {
+        last_non_silent_qpc_.store(now, std::memory_order_release);
+    }
+    const HRESULT hr = render_client_->ReleaseBuffer(frames, 0);
+    Log::Info("IAudioRenderClient::ReleaseBuffer stream=%p frames=%u flags=0 samples=%s result=0x%08lX",
+              this, frames, non_silent ? "non-silent" : "silent", static_cast<unsigned long>(hr));
+    if (FAILED(hr)) {
+        Log::Error("IAudioRenderClient::ReleaseBuffer failed stream=%p frames=%u result=0x%08lX",
+                   this, frames, static_cast<unsigned long>(hr));
+    }
+    return hr;
+}
+
+void SpatialRenderStream::StartWatchdog()
+{
+    if (!Log::Enabled() || watchdog_thread_) {
+        return;
+    }
+    watchdog_stop_event_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!watchdog_stop_event_) {
+        Log::Error("Watchdog CreateEvent failed stream=%p win32_error=%lu", this, GetLastError());
+        return;
+    }
+    watchdog_thread_ = CreateThread(nullptr, 0, &SpatialRenderStream::WatchdogThread, this, 0, nullptr);
+    if (!watchdog_thread_) {
+        Log::Error("Watchdog CreateThread failed stream=%p win32_error=%lu", this, GetLastError());
+        CloseHandle(watchdog_stop_event_);
+        watchdog_stop_event_ = nullptr;
+        return;
+    }
+    Log::Info("Observation-only watchdog started stream=%p poll_ms=%d stall_ms=%d",
+              this, g_config.watchdog_poll_interval_ms, g_config.watchdog_stall_timeout_ms);
+}
+
+void SpatialRenderStream::StopWatchdog()
+{
+    if (!watchdog_thread_) {
+        return;
+    }
+    SetEvent(watchdog_stop_event_);
+    WaitForSingleObject(watchdog_thread_, INFINITE);
+    CloseHandle(watchdog_thread_);
+    CloseHandle(watchdog_stop_event_);
+    watchdog_thread_ = nullptr;
+    watchdog_stop_event_ = nullptr;
+    Log::Info("Observation-only watchdog stopped stream=%p", this);
+}
+
+DWORD WINAPI SpatialRenderStream::WatchdogThread(void* context)
+{
+    auto* stream = static_cast<SpatialRenderStream*>(context);
+    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    stream->WatchdogLoop();
+    CoUninitialize();
+    return 0;
+}
+
+void SpatialRenderStream::WatchdogLoop()
+{
+    StallDetector detector({
+        MillisecondsToQpc(g_config.watchdog_stall_timeout_ms),
+        MillisecondsToQpc(g_config.watchdog_non_silent_window_ms),
+        MillisecondsToQpc(g_config.watchdog_buffer_activity_window_ms),
+    });
+    const std::uint64_t status_interval = MillisecondsToQpc(g_config.diagnostics_periodic_status_ms);
+    std::uint64_t last_status = 0;
+
+    while (WaitForSingleObject(watchdog_stop_event_, static_cast<DWORD>(g_config.watchdog_poll_interval_ms)) == WAIT_TIMEOUT) {
+        const std::uint64_t now = QpcNow();
+        UINT32 padding = 0;
+        const HRESULT padding_hr = audio_client_ ? audio_client_->GetCurrentPadding(&padding) : E_FAIL;
+
+        UINT64 position = 0;
+        UINT64 device_position = 0;
+        const HRESULT position_hr = audio_clock_ ? audio_clock_->GetPosition(&position, &device_position) : E_NOINTERFACE;
+
+        const bool periodic = last_status == 0 || now - last_status >= status_interval;
+        if (periodic || FAILED(padding_hr) || FAILED(position_hr)) {
+            UINT64 frequency = 0;
+            const HRESULT frequency_hr = audio_clock_ ? audio_clock_->GetFrequency(&frequency) : E_NOINTERFACE;
+            Log::Info("Watchdog status stream=%p started=%d padding_hr=0x%08lX padding=%u clock_hr=0x%08lX position=%llu device_position=%llu frequency_hr=0x%08lX frequency=%llu",
+                      this,
+                      started_.load(std::memory_order_acquire),
+                      static_cast<unsigned long>(padding_hr),
+                      padding,
+                      static_cast<unsigned long>(position_hr),
+                      static_cast<unsigned long long>(position),
+                      static_cast<unsigned long long>(device_position),
+                      static_cast<unsigned long>(frequency_hr),
+                      static_cast<unsigned long long>(frequency));
+            if (FAILED(padding_hr)) {
+                Log::Error("IAudioClient::GetCurrentPadding failed stream=%p result=0x%08lX",
+                           this, static_cast<unsigned long>(padding_hr));
+            }
+            if (audio_clock_ && FAILED(position_hr)) {
+                Log::Error("IAudioClock::GetPosition failed stream=%p result=0x%08lX",
+                           this, static_cast<unsigned long>(position_hr));
+            }
+            if (audio_clock_ && FAILED(frequency_hr)) {
+                Log::Error("IAudioClock::GetFrequency failed stream=%p result=0x%08lX",
+                           this, static_cast<unsigned long>(frequency_hr));
+            }
+            last_status = now;
+        }
+
+        StallObservation observation{};
+        observation.now_ticks = now;
+        observation.started = started_.load(std::memory_order_acquire);
+        observation.playback_measurement_valid = SUCCEEDED(position_hr);
+        observation.playback_position = position;
+        observation.last_non_silent_ticks = last_non_silent_qpc_.load(std::memory_order_acquire);
+        observation.last_buffer_operation_ticks = last_buffer_operation_qpc_.load(std::memory_order_acquire);
+        observation.buffer_operations_expected = observation.started && event_handle_ != nullptr;
+
+        const StallTransition transition = detector.Observe(observation);
+        if (transition == StallTransition::Suspected) {
+            Log::Error("SUSPECTED_AUDIO_STALL observation_only=1 stream=%p timeout_ms=%d position=%llu padding=%u last_non_silent_qpc=%llu last_buffer_qpc=%llu",
+                       this,
+                       g_config.watchdog_stall_timeout_ms,
+                       static_cast<unsigned long long>(position),
+                       padding,
+                       static_cast<unsigned long long>(observation.last_non_silent_ticks),
+                       static_cast<unsigned long long>(observation.last_buffer_operation_ticks));
+        } else if (transition == StallTransition::Cleared) {
+            Log::Warn("SUSPECTED_AUDIO_STALL_CONDITION_CLEARED stream=%p position=%llu",
+                      this, static_cast<unsigned long long>(position));
+        }
+    }
 }
 
 HRESULT STDMETHODCALLTYPE SpatialRenderStream::ActivateSpatialAudioObject(AudioObjectType type, ISpatialAudioObject** out)
@@ -1213,7 +1463,10 @@ HRESULT STDMETHODCALLTYPE SpatialAudioWrapper::ActivateSpatialAudioStream(const 
     *out = nullptr;
 
     if (!IsEqualIID(riid, IID_ISpatialAudioObjectRenderStream)) {
-        return passthrough_ ? passthrough_->ActivateSpatialAudioStream(prop, riid, out) : E_NOINTERFACE;
+        const HRESULT hr = passthrough_ ? passthrough_->ActivateSpatialAudioStream(prop, riid, out) : E_NOINTERFACE;
+        Log::Info("ISpatialAudioClient::ActivateSpatialAudioStream passthrough iid=%s result=0x%08lX stream=%p",
+                  GuidToString(riid).c_str(), static_cast<unsigned long>(hr), out ? *out : nullptr);
+        return hr;
     }
 
     if (!prop || prop->vt != VT_BLOB || prop->blob.cbSize != sizeof(SpatialAudioObjectRenderStreamActivationParams)) {
@@ -1247,6 +1500,7 @@ HRESULT STDMETHODCALLTYPE SpatialAudioWrapper::ActivateSpatialAudioStream(const 
     }
 
     *out = static_cast<ISpatialAudioObjectRenderStream*>(stream);
+    Log::Info("ISpatialAudioClient::ActivateSpatialAudioStream wrapped result=0x%08lX stream=%p", S_OK, *out);
     return S_OK;
 }
 
@@ -1639,6 +1893,87 @@ void HookIMMDeviceEnumerator(void* enumerator)
     }
 }
 
+class EndpointNotificationLogger final : public IMMNotificationClient {
+public:
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** out) override
+    {
+        if (!out) {
+            return E_POINTER;
+        }
+        *out = nullptr;
+        if (IsEqualIID(iid, IID_IUnknown) || IsEqualIID(iid, IID_IMMNotificationClient)) {
+            *out = static_cast<IMMNotificationClient*>(this);
+            AddRef();
+            return S_OK;
+        }
+        return E_NOINTERFACE;
+    }
+
+    ULONG STDMETHODCALLTYPE AddRef() override
+    {
+        return ref_.fetch_add(1, std::memory_order_relaxed) + 1;
+    }
+
+    ULONG STDMETHODCALLTYPE Release() override
+    {
+        return ref_.fetch_sub(1, std::memory_order_acq_rel) - 1;
+    }
+
+    HRESULT STDMETHODCALLTYPE OnDeviceStateChanged(LPCWSTR device_id, DWORD state) override
+    {
+        Log::Warn("Audio device callback state_changed id=%s state=0x%08lX",
+                  device_id ? Narrow(device_id).c_str() : "<null>", static_cast<unsigned long>(state));
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE OnDeviceAdded(LPCWSTR device_id) override
+    {
+        Log::Warn("Audio device callback added id=%s", device_id ? Narrow(device_id).c_str() : "<null>");
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE OnDeviceRemoved(LPCWSTR device_id) override
+    {
+        Log::Error("Audio device callback removed/disconnected id=%s", device_id ? Narrow(device_id).c_str() : "<null>");
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE OnDefaultDeviceChanged(EDataFlow flow, ERole role, LPCWSTR device_id) override
+    {
+        Log::Warn("Audio device callback default_changed flow=%d role=%d id=%s",
+                  static_cast<int>(flow), static_cast<int>(role),
+                  device_id ? Narrow(device_id).c_str() : "<null>");
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE OnPropertyValueChanged(LPCWSTR device_id, const PROPERTYKEY key) override
+    {
+        Log::Info("Audio device callback property_changed id=%s fmtid=%s pid=%lu",
+                  device_id ? Narrow(device_id).c_str() : "<null>",
+                  GuidToString(key.fmtid).c_str(), static_cast<unsigned long>(key.pid));
+        return S_OK;
+    }
+
+private:
+    std::atomic<ULONG> ref_{1};
+};
+
+EndpointNotificationLogger g_endpoint_notification_logger;
+
+void RegisterEndpointNotifications(IMMDeviceEnumerator* enumerator)
+{
+    if (!enumerator || !Log::Enabled() || g_registered_endpoint_notifications.exchange(true)) {
+        return;
+    }
+    const HRESULT hr = enumerator->RegisterEndpointNotificationCallback(&g_endpoint_notification_logger);
+    Log::Info("IMMDeviceEnumerator::RegisterEndpointNotificationCallback result=0x%08lX callback=%p",
+              static_cast<unsigned long>(hr), &g_endpoint_notification_logger);
+    if (FAILED(hr)) {
+        g_registered_endpoint_notifications = false;
+        Log::Error("Device notification registration failed result=0x%08lX", static_cast<unsigned long>(hr));
+    }
+}
+
 HRESULT WINAPI HookedCoCreateInstance(REFCLSID clsid, LPUNKNOWN outer, DWORD clsctx, REFIID iid, LPVOID* out)
 {
     const HRESULT result = g_co_create_instance(clsid, outer, clsctx, iid, out);
@@ -1655,6 +1990,7 @@ HRESULT WINAPI HookedCoCreateInstance(REFCLSID clsid, LPUNKNOWN outer, DWORD cls
 
     if (SUCCEEDED(result) && out && *out && IsEqualGUID(clsid, kClsidMMDeviceEnumerator)) {
         HookIMMDeviceEnumerator(*out);
+        RegisterEndpointNotifications(static_cast<IMMDeviceEnumerator*>(*out));
     }
 
     return result;
@@ -1700,7 +2036,20 @@ DWORD WINAPI MainThread(void*)
     g_module_dir = std::filesystem::path(module_path).parent_path();
 
     g_config = LoadConfig(g_module_dir / kConfigName);
-    Log::Init({}, false);
+    QueryPerformanceFrequency(&g_qpc_frequency);
+    std::filesystem::path log_path = g_config.diagnostics_log_path;
+    if (log_path.empty()) {
+        log_path = L"MetaphorAudioFix-diagnostic.log";
+    }
+    if (log_path.is_relative()) {
+        log_path = g_module_dir / log_path;
+    }
+    Log::Init(
+        log_path,
+        g_config.diagnostics_enabled,
+        static_cast<std::uint64_t>(g_config.diagnostics_max_log_size_mb) * 1024ULL * 1024ULL,
+        g_config.diagnostics_max_log_files
+    );
 
     Log::Info("%s loaded from %s", Narrow(kFixName).c_str(), Narrow(g_module_dir.wstring()).c_str());
     Log::Info("Config: xaudio2_enabled=%d force_stereo_mastering_voice=%d override_explicit_multichannel_voices=%d",
@@ -1717,6 +2066,17 @@ DWORD WINAPI MainThread(void*)
               g_config.reject_multichannel_is_format_supported,
               g_config.reject_multichannel_initialize);
     Log::Info("Config: spatial_wrapper_enabled=%d", g_config.spatial_wrapper_enabled);
+    Log::Info("Config: diagnostics_enabled=%d log_path=%s max_log_size_mb=%d max_log_files=%d",
+              g_config.diagnostics_enabled,
+              Narrow(log_path.wstring()).c_str(),
+              g_config.diagnostics_max_log_size_mb,
+              g_config.diagnostics_max_log_files);
+    Log::Info("Config: watchdog observation_only=1 stall_timeout_ms=%d poll_interval_ms=%d non_silent_window_ms=%d buffer_activity_window_ms=%d periodic_status_ms=%d",
+              g_config.watchdog_stall_timeout_ms,
+              g_config.watchdog_poll_interval_ms,
+              g_config.watchdog_non_silent_window_ms,
+              g_config.watchdog_buffer_activity_window_ms,
+              g_config.diagnostics_periodic_status_ms);
     Log::Info("Config: module_poll_timeout_ms=%d module_poll_interval_ms=%d",
               g_config.module_poll_timeout_ms,
               g_config.module_poll_interval_ms);
