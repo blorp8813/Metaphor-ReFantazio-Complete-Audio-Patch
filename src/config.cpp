@@ -131,6 +131,13 @@ Config LoadConfig(const std::filesystem::path& path)
                 config.watchdog_buffer_activity_window_ms = ParseInt(value, config.watchdog_buffer_activity_window_ms);
             } else if (key == "periodicstatusms") {
                 config.diagnostics_periodic_status_ms = ParseInt(value, config.diagnostics_periodic_status_ms);
+            } else if (key == "detailedbufferlogging") {
+                config.diagnostics_detailed_buffer_logging =
+                    ParseBool(value, config.diagnostics_detailed_buffer_logging);
+            } else if (key == "bufferlogsamplerate") {
+                config.diagnostics_buffer_log_sample_rate = ParseInt(value, config.diagnostics_buffer_log_sample_rate);
+            } else if (key == "errorreminderms") {
+                config.diagnostics_error_reminder_ms = ParseInt(value, config.diagnostics_error_reminder_ms);
             }
         } else if (current_section == "bootstrap") {
             if (key == "modulepolltimeoutms") {
@@ -154,6 +161,8 @@ Config LoadConfig(const std::filesystem::path& path)
     config.watchdog_non_silent_window_ms = std::clamp(config.watchdog_non_silent_window_ms, 100, 60000);
     config.watchdog_buffer_activity_window_ms = std::clamp(config.watchdog_buffer_activity_window_ms, 100, 60000);
     config.diagnostics_periodic_status_ms = std::clamp(config.diagnostics_periodic_status_ms, 100, 60000);
+    config.diagnostics_buffer_log_sample_rate = std::clamp(config.diagnostics_buffer_log_sample_rate, 1, 100000);
+    config.diagnostics_error_reminder_ms = std::clamp(config.diagnostics_error_reminder_ms, 1000, 600000);
 
     return config;
 }
