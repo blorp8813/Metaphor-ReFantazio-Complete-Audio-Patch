@@ -23,7 +23,9 @@ struct LoggerState {
     std::atomic<bool> enabled{false};
     std::atomic<bool> stopping{false};
     std::atomic<bool> writer_terminated{false};
+    std::atomic<std::uint32_t> active_producers{0};
     std::atomic<std::uint64_t> dropped{0};
+    SRWLOCK producer_gate = SRWLOCK_INIT;
     SRWLOCK queue_lock = SRWLOCK_INIT;
     Entry queue[kQueueCapacity]{};
     size_t head = 0;
@@ -195,7 +197,23 @@ DWORD WINAPI WriterThread(void*)
 
 void Enqueue(Level level, const char* format, va_list args)
 {
+    g_state.active_producers.fetch_add(1, std::memory_order_acq_rel);
+    struct ProducerGuard {
+        ~ProducerGuard() { g_state.active_producers.fetch_sub(1, std::memory_order_acq_rel); }
+    } producer_guard;
+
     if (!g_state.enabled.load(std::memory_order_relaxed) || !format) {
+        return;
+    }
+
+    // Shutdown takes this gate exclusively before it signals or closes logger
+    // handles. Producers never block the caller: contention drops the record.
+    if (!TryAcquireSRWLockShared(&g_state.producer_gate)) {
+        g_state.dropped.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    if (!g_state.enabled.load(std::memory_order_acquire)) {
+        ReleaseSRWLockShared(&g_state.producer_gate);
         return;
     }
 
@@ -213,24 +231,35 @@ void Enqueue(Level level, const char* format, va_list args)
 
     if (!TryAcquireSRWLockExclusive(&g_state.queue_lock)) {
         g_state.dropped.fetch_add(1, std::memory_order_relaxed);
+        ReleaseSRWLockShared(&g_state.producer_gate);
         return;
     }
     if (g_state.count == kQueueCapacity) {
         ReleaseSRWLockExclusive(&g_state.queue_lock);
         g_state.dropped.fetch_add(1, std::memory_order_relaxed);
+        ReleaseSRWLockShared(&g_state.producer_gate);
         return;
     }
     g_state.queue[g_state.tail] = entry;
     g_state.tail = (g_state.tail + 1) % kQueueCapacity;
     ++g_state.count;
     ReleaseSRWLockExclusive(&g_state.queue_lock);
-    SetEvent(g_state.wake_event);
+    if (g_state.wake_event) {
+        SetEvent(g_state.wake_event);
+    }
+    ReleaseSRWLockShared(&g_state.producer_gate);
 }
 }
 
 void Init(const std::filesystem::path& path, bool enabled, std::uint64_t max_bytes, int max_files)
 {
-    if (!enabled || g_state.enabled.exchange(true, std::memory_order_acq_rel)) {
+    if (!enabled) {
+        return;
+    }
+
+    AcquireSRWLockExclusive(&g_state.producer_gate);
+    if (g_state.enabled.load(std::memory_order_acquire) || g_state.thread) {
+        ReleaseSRWLockExclusive(&g_state.producer_gate);
         return;
     }
 
@@ -247,15 +276,18 @@ void Init(const std::filesystem::path& path, bool enabled, std::uint64_t max_byt
 
     g_state.wake_event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     if (!g_state.wake_event) {
-        g_state.enabled = false;
+        ReleaseSRWLockExclusive(&g_state.producer_gate);
         return;
     }
     g_state.thread = CreateThread(nullptr, 0, &WriterThread, nullptr, 0, nullptr);
     if (!g_state.thread) {
         CloseHandle(g_state.wake_event);
         g_state.wake_event = nullptr;
-        g_state.enabled = false;
+        ReleaseSRWLockExclusive(&g_state.producer_gate);
+        return;
     }
+    g_state.enabled.store(true, std::memory_order_release);
+    ReleaseSRWLockExclusive(&g_state.producer_gate);
 }
 
 bool Enabled()
@@ -289,18 +321,35 @@ void Error(const char* format, ...)
 
 bool Shutdown(DWORD timeout_ms)
 {
+    const ULONGLONG shutdown_start = GetTickCount64();
     const bool was_enabled = g_state.enabled.exchange(false, std::memory_order_acq_rel);
     if (!was_enabled && !g_state.thread) {
         return ShutdownComplete();
     }
-    if (was_enabled) {
+    AcquireSRWLockExclusive(&g_state.producer_gate);
+    if (was_enabled || g_state.thread) {
         g_state.stopping = true;
         if (g_state.wake_event) {
             SetEvent(g_state.wake_event);
         }
     }
+    ReleaseSRWLockExclusive(&g_state.producer_gate);
+
+    while (g_state.active_producers.load(std::memory_order_acquire) != 0) {
+        if (timeout_ms != INFINITE && GetTickCount64() - shutdown_start >= timeout_ms) {
+            OutputDebugStringA("MetaphorAudioFix: logger producers did not drain; handles retained and DLL unload must be refused.\n");
+            return false;
+        }
+        SwitchToThread();
+    }
+
     if (g_state.thread) {
-        const DWORD wait_result = WaitForSingleObject(g_state.thread, timeout_ms);
+        DWORD writer_timeout = timeout_ms;
+        if (timeout_ms != INFINITE) {
+            const ULONGLONG elapsed = GetTickCount64() - shutdown_start;
+            writer_timeout = elapsed >= timeout_ms ? 0 : timeout_ms - static_cast<DWORD>(elapsed);
+        }
+        const DWORD wait_result = WaitForSingleObject(g_state.thread, writer_timeout);
         if (wait_result != WAIT_OBJECT_0 || !g_state.writer_terminated.load(std::memory_order_acquire)) {
             OutputDebugStringA("MetaphorAudioFix: logger writer did not terminate; handles retained and DLL unload must be refused.\n");
             return false;
