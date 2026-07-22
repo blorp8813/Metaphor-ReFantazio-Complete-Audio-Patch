@@ -25,7 +25,7 @@ The exact game build used during testing was not recorded. Other Mac models, Win
 
 ## Download
 
-Download the newest ZIP from this repository's **Releases** page. Verify it using the included `.sha256` checksum file before installing.
+Download the newest ZIP from this repository's **Releases** page.
 
 ## Easy installation
 
