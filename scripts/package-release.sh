@@ -19,8 +19,8 @@ zip_path="${dist_dir}/${release_name}.zip"
 sha_path="${zip_path}.sha256"
 
 required_runtime=(
-  MetaphorAudioFix.asi
-  MetaphorAudioFix.ini
+  MetaphorCompleteAudioPatch.asi
+  MetaphorCompleteAudioPatch.ini
   libwinpthread-1.dll
   winmm.dll
   winpthreads-LICENSE.txt
@@ -33,7 +33,7 @@ for file in "${required_runtime[@]}"; do
   fi
 done
 
-if ! cmp -s "${package_dir}/MetaphorAudioFix.ini" "${root_dir}/MetaphorAudioFix.ini"; then
+if ! cmp -s "${package_dir}/MetaphorCompleteAudioPatch.ini" "${root_dir}/MetaphorCompleteAudioPatch.ini"; then
   echo "Built package INI is stale; rebuild before packaging." >&2
   exit 1
 fi

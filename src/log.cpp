@@ -366,7 +366,7 @@ bool Shutdown(DWORD timeout_ms)
         }
         const DWORD wait_result = WaitForSingleObject(g_state.thread, writer_timeout);
         if (wait_result != WAIT_OBJECT_0 || !g_state.writer_terminated.load(std::memory_order_acquire)) {
-            OutputDebugStringA("MetaphorAudioFix: logger writer did not terminate; handles retained and DLL unload must be refused.\n");
+            OutputDebugStringA("MetaphorCompleteAudioPatch: logger writer did not terminate; handles retained and DLL unload must be refused.\n");
             return false;
         }
         CloseHandle(g_state.thread);
