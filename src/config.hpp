@@ -28,7 +28,7 @@ struct Config {
     int diagnostics_error_reminder_ms = 30000;
     bool recovery_enabled = false;
     bool recovery_adaptive_buffer_retry = true;
-    bool recovery_reset_restart_fallback = true;
+    bool recovery_reset_restart_fallback = false;
     bool recovery_recreate_client_fallback = false;
     int recovery_maximum_attempts_per_failure = 1;
     int recovery_maximum_recoveries_per_window = 3;

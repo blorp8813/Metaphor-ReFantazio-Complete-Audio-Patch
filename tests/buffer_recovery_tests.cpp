@@ -12,6 +12,7 @@ using BufferRecovery::AcquireOutcome;
 using BufferRecovery::Config;
 using BufferRecovery::Coordinator;
 using BufferRecovery::Hr;
+using BufferRecovery::Stage;
 
 constexpr Hr kFail = -1;
 constexpr Hr kOtherAudioFailure = -2;
@@ -42,6 +43,7 @@ struct MockBackend {
     bool start_observed_started = true;
     std::vector<std::uint32_t> get_requests;
     std::vector<std::uint32_t> release_requests;
+    std::vector<std::pair<bool, Stage>> stage_events;
     std::function<void()> on_stop;
     std::size_t get_index = 0;
     std::size_t padding_index = 0;
@@ -100,6 +102,8 @@ struct MockBackend {
     std::uint64_t NowTicks() { return now++; }
     bool IsStarted() const { return started; }
     void ReleaseBuffer(std::uint32_t frames) { release_requests.push_back(frames); }
+    void StageBefore(Stage stage) { stage_events.emplace_back(true, stage); }
+    void StageAfter(Stage stage, Hr) { stage_events.emplace_back(false, stage); }
 };
 
 Config RecoveryConfig()
@@ -157,6 +161,15 @@ int main()
                "Stop/Reset/Start and retry succeed");
         Expect(outcome.frames == 480, "fallback retry propagates frame count");
         Expect(backend.started, "successful fallback leaves stream started");
+        const std::vector<std::pair<bool, Stage>> expected_stages{
+            {true, Stage::Stop}, {false, Stage::Stop},
+            {true, Stage::Reset}, {false, Stage::Reset},
+            {true, Stage::Start}, {false, Stage::Start},
+            {true, Stage::GetCurrentPadding}, {false, Stage::GetCurrentPadding},
+            {true, Stage::GetBuffer}, {false, Stage::GetBuffer},
+        };
+        Expect(backend.stage_events == expected_stages,
+               "fallback publishes before/after markers around every blocking call");
     }
 
     {

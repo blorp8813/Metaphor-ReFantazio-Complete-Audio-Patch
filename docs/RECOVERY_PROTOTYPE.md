@@ -10,8 +10,9 @@ behavior.
 
 Recovery is configured under `[Recovery]`. A missing or malformed `Enabled`
 value leaves recovery disabled. `FaultInjectBufferTooLargeAfter` defaults to
-zero and malformed values also resolve to zero. The prototype package sets
-`Enabled=true`, but fault injection remains off.
+zero and malformed values also resolve to zero. The adaptive-retry-only package
+sets `Enabled=true`, but reset/restart, client recreation, and fault injection
+remain off.
 
 ## Buffer geometry
 
@@ -33,7 +34,8 @@ logged together.
 5. A successful adaptive retry becomes the active update size and the original
    failure is not counted as a final GetBuffer failure.
 6. Zero availability, inconsistent padding, or a second
-   `AUDCLNT_E_BUFFER_TOO_LARGE` can enter one Stop/Reset/Start fallback.
+   `AUDCLNT_E_BUFFER_TOO_LARGE` can enter one Stop/Reset/Start fallback only
+   when `ResetRestartFallback=true`.
 7. After Start, padding is refreshed and one bounded GetBuffer retry is made.
 8. Success is returned to Metaphor only after a real buffer has been acquired.
 
@@ -80,7 +82,11 @@ also has an atomic recovery gate. `recovery_in_progress_`, protected by
 `lock_`, rejects same-thread reentry with
 `AUDCLNT_E_BUFFER_OPERATION_PENDING`.
 
-No logger lock is held while any WASAPI method is called. Recovery event logs
+No logger lock is held while any WASAPI method is called. Lightweight,
+nonblocking `BUFFER_RECOVERY_STAGE_BEFORE` and `BUFFER_RECOVERY_STAGE_AFTER`
+records are queued immediately around each fallback Stop, Reset, Start,
+GetCurrentPadding, and GetBuffer call while `lock_` is held. This leaves a
+durable last-stage marker if a Wine call blocks. Aggregate recovery outcomes
 are emitted after releasing `lock_`.
 
 ## Reentrancy and concurrent Stop
@@ -118,6 +124,8 @@ The prototype emits:
 - `ADAPTIVE_BUFFER_RETRY_SUCCEEDED`
 - `ADAPTIVE_BUFFER_RETRY_FAILED`
 - `BUFFER_RECOVERY_STARTED`
+- `BUFFER_RECOVERY_STAGE_BEFORE`
+- `BUFFER_RECOVERY_STAGE_AFTER`
 - `BUFFER_RECOVERY_RESET_SUCCEEDED`
 - `BUFFER_RECOVERY_SUCCEEDED`
 - `BUFFER_RECOVERY_FAILED`
