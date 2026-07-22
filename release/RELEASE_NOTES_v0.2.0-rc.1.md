@@ -57,7 +57,7 @@ Do not upload game binaries, saves, credentials, personal paths, or unrelated Cr
 
 ## Checksums
 
-- `MetaphorAudioFix.asi`: `5befdfca7c78087edd378d2d21ffbd3321ec5a225de565197d6017f3db9c1a74`
-- `Metaphor-ReFantazio-Complete-Audio-Patch-v0.2.0-rc.1-win64.zip`: `1b5ec8eeb4b904ad1fed8e317b08a3345285ac3f2e1e0c846f2124b351d6dc7a`
+- `MetaphorCompleteAudioPatch.asi`: `525adf81b3fb1484cbc6c32d1184b16a133caa63cc16c37b239a871516dd0f7b`
+- `Metaphor-ReFantazio-Complete-Audio-Patch-v0.2.0-rc.1-win64.zip`: `04f85df675e38e343c575c5d92ac08333aea200b4984055055b3164a4ad95e6b`
 
 This unofficial community project is not affiliated with or endorsed by ATLUS, SEGA, CodeWeavers, Valve, Microsoft, or Apple.

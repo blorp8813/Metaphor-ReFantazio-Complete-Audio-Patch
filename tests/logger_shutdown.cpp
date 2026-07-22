@@ -35,7 +35,7 @@ int main()
         return 1;
     }
 
-    std::filesystem::path log_path = std::filesystem::path(temporary_directory) / L"MetaphorAudioFix-logger-shutdown-test.log";
+    std::filesystem::path log_path = std::filesystem::path(temporary_directory) / L"MetaphorCompleteAudioPatch-logger-shutdown-test.log";
     DeleteFileW(log_path.c_str());
 
     Log::Init(log_path, true, false, 1024 * 1024, 2);

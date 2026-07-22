@@ -8,8 +8,8 @@
 #include <MinHook.h>
 
 namespace {
-constexpr std::wstring_view kFixName = L"MetaphorAudioFix";
-constexpr std::wstring_view kConfigName = L"MetaphorAudioFix.ini";
+constexpr std::wstring_view kFixName = L"MetaphorCompleteAudioPatch";
+constexpr std::wstring_view kConfigName = L"MetaphorCompleteAudioPatch.ini";
 
 constexpr std::wstring_view kXAudio27 = L"xaudio2_7.dll";
 constexpr std::wstring_view kXAudio28 = L"xaudio2_8.dll";
@@ -1382,7 +1382,7 @@ HRESULT STDMETHODCALLTYPE SpatialRenderStream::BeginUpdatingAudioObjects(UINT32*
 
 void SpatialRenderStream::LogBufferRecoveryOutcome(const BufferRecovery::AcquireOutcome& outcome)
 {
-#if METAPHOR_AUDIO_FIX_ENABLE_FAULT_INJECTION
+#if METAPHOR_COMPLETE_AUDIO_PATCH_ENABLE_FAULT_INJECTION
     if (outcome.fault_injected) {
         Log::Warn("FAULT_INJECTION_BUFFER_TOO_LARGE stream=%p successful_cycles=%llu threshold=%d",
                   this,
@@ -2530,7 +2530,7 @@ void HookCoCreateInstance()
     Log::Info("Logger shutdown beginning outside loader lock");
     bool logger_stopped = Log::Shutdown(5000);
     if (!logger_stopped) {
-        OutputDebugStringA("MetaphorAudioFix: logger shutdown exceeded 5 seconds; waiting outside loader lock before teardown can complete.\n");
+        OutputDebugStringA("MetaphorCompleteAudioPatch: logger shutdown exceeded 5 seconds; waiting outside loader lock before teardown can complete.\n");
         logger_stopped = Log::Shutdown(INFINITE);
     }
 
@@ -2540,11 +2540,11 @@ void HookCoCreateInstance()
     }
 
     if (!logger_stopped) {
-        OutputDebugStringA("MetaphorAudioFix: controlled teardown refused DLL unload because logger termination was not confirmed.\n");
+        OutputDebugStringA("MetaphorCompleteAudioPatch: controlled teardown refused DLL unload because logger termination was not confirmed.\n");
         ExitThread(1);
     }
 
-    OutputDebugStringA("MetaphorAudioFix: controlled teardown complete; DLL self-reference retained until process exit.\n");
+    OutputDebugStringA("MetaphorCompleteAudioPatch: controlled teardown complete; DLL self-reference retained until process exit.\n");
     ExitThread(0);
 }
 
@@ -2554,12 +2554,12 @@ DWORD WINAPI MainThread(void*)
             GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
             reinterpret_cast<LPCWSTR>(&MainThread),
             &g_self_reference)) {
-        OutputDebugStringA("MetaphorAudioFix: failed to retain DLL self-reference; diagnostics bootstrap aborted.\n");
+        OutputDebugStringA("MetaphorCompleteAudioPatch: failed to retain DLL self-reference; diagnostics bootstrap aborted.\n");
         return 0;
     }
     g_runtime_shutdown_event.store(CreateEventW(nullptr, TRUE, FALSE, nullptr), std::memory_order_release);
     if (!g_runtime_shutdown_event.load(std::memory_order_acquire)) {
-        OutputDebugStringA("MetaphorAudioFix: failed to create controlled-shutdown event; diagnostics bootstrap aborted.\n");
+        OutputDebugStringA("MetaphorCompleteAudioPatch: failed to create controlled-shutdown event; diagnostics bootstrap aborted.\n");
         FreeLibraryAndExitThread(g_self_reference, 1);
     }
 
@@ -2570,7 +2570,7 @@ DWORD WINAPI MainThread(void*)
     QueryPerformanceFrequency(&g_qpc_frequency);
     std::filesystem::path log_path = g_config.diagnostics_log_path;
     if (log_path.empty()) {
-        log_path = L"MetaphorAudioFix.log";
+        log_path = L"MetaphorCompleteAudioPatch.log";
     }
     if (log_path.is_relative()) {
         log_path = g_module_dir / log_path;
@@ -2632,7 +2632,7 @@ DWORD WINAPI MainThread(void*)
                       g_config.recovery_maximum_recoveries_per_window,
                       g_config.recovery_window_ms,
                       g_config.recovery_cooldown_ms,
-                      METAPHOR_AUDIO_FIX_ENABLE_FAULT_INJECTION);
+                      METAPHOR_COMPLETE_AUDIO_PATCH_ENABLE_FAULT_INJECTION);
     if (g_config.recovery_recreate_client_fallback) {
         Log::Warn("RecreateClientFallback requested but not implemented; option ignored");
     }
@@ -2693,7 +2693,7 @@ DWORD WINAPI MainThread(void*)
 }
 }
 
-extern "C" __declspec(dllexport) BOOL WINAPI RequestMetaphorAudioFixDiagnosticShutdown()
+extern "C" __declspec(dllexport) BOOL WINAPI RequestMetaphorCompleteAudioPatchDiagnosticShutdown()
 {
     HANDLE shutdown_event = g_runtime_shutdown_event.load(std::memory_order_acquire);
     if (!shutdown_event) {

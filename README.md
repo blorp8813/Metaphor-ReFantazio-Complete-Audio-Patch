@@ -27,8 +27,6 @@ The exact game build used during testing was not recorded. Other Mac models, Win
 
 Download the newest ZIP from this repository's **Releases** page. Verify it using the included `.sha256` checksum file before installing.
 
-The internal plugin filenames remain `MetaphorAudioFix.*` because those are the filenames used by the plugin.
-
 ## Installation
 
 1. Fully close the game and Steam inside CrossOver or Wine.
@@ -37,8 +35,8 @@ The internal plugin filenames remain `MetaphorAudioFix.*` because those are the 
 4. Extract the release ZIP.
 5. Copy these four files beside `METAPHOR.exe`:
 
-   - `MetaphorAudioFix.asi`
-   - `MetaphorAudioFix.ini`
+   - `MetaphorCompleteAudioPatch.asi`
+   - `MetaphorCompleteAudioPatch.ini`
    - `winmm.dll`
    - `libwinpthread-1.dll`
 
@@ -69,7 +67,7 @@ RecreateClientFallback = false
 FaultInjectBufferTooLargeAfter = 0
 ```
 
-When the temporary audio-buffer problem occurs, the patch writes a small recovery record to `MetaphorAudioFix.log`. The log is size-limited and rotated automatically. Set `RecoveryLogging = false` to disable it.
+When the temporary audio-buffer problem occurs, the patch writes a small recovery record to `MetaphorCompleteAudioPatch.log`. The log is size-limited and rotated automatically. Set `RecoveryLogging = false` to disable it.
 
 ## Troubleshooting
 
@@ -82,14 +80,14 @@ When the temporary audio-buffer problem occurs, the patch writes a small recover
 
 ### Dialogue is still quiet or hollow
 
-- Confirm `[Spatial] WrapperEnabled = true` in `MetaphorAudioFix.ini`.
+- Confirm `[Spatial] WrapperEnabled = true` in `MetaphorCompleteAudioPatch.ini`.
 - Confirm the ASI loader is actually loading the plugin.
 - Test with a normal stereo macOS output before adding Bluetooth, controller, or virtual audio devices.
 
 ### All audio still cuts out
 
-- Check `MetaphorAudioFix.log` for `BUFFER_TOO_LARGE_CAUGHT`, `ADAPTIVE_BUFFER_RETRY_SUCCEEDED`, or `ADAPTIVE_BUFFER_RETRY_FAILED`.
-- Enable the diagnostic sample in [`config/MetaphorAudioFix.diagnostic.ini`](config/MetaphorAudioFix.diagnostic.ini) for a short reproduction session.
+- Check `MetaphorCompleteAudioPatch.log` for `BUFFER_TOO_LARGE_CAUGHT`, `ADAPTIVE_BUFFER_RETRY_SUCCEEDED`, or `ADAPTIVE_BUFFER_RETRY_FAILED`.
+- Enable the diagnostic sample in [`config/MetaphorCompleteAudioPatch.diagnostic.ini`](config/MetaphorCompleteAudioPatch.diagnostic.ini) for a short reproduction session.
 - Restore the normal production INI after testing because full diagnostics add overhead.
 
 When reporting a problem, include your macOS version, Mac model and chip, CrossOver or Wine version, game version, output device, plugin checksum, and a short relevant log excerpt. Review the log first and remove personal paths or device information you do not want to share.
@@ -99,7 +97,7 @@ When reporting a problem, include your macOS version, Mac model and chip, CrossO
 ## Uninstall
 
 1. Close the game and Steam.
-2. Remove `MetaphorAudioFix.asi` and `MetaphorAudioFix.ini` from the game folder.
+2. Remove `MetaphorCompleteAudioPatch.asi` and `MetaphorCompleteAudioPatch.ini` from the game folder.
 3. Remove `libwinpthread-1.dll` if no other plugin uses it.
 4. Remove `winmm.dll` only if no other mod depends on it.
 5. In CrossOver's Wine Configuration, remove the `winmm` library override only if no other ASI mod needs it.

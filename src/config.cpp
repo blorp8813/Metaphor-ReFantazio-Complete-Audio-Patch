@@ -161,7 +161,7 @@ Config LoadConfig(const std::filesystem::path& path)
             } else if (key == "recoverycooldownms") {
                 config.recovery_cooldown_ms = ParseInt(value, config.recovery_cooldown_ms);
             } else if (key == "faultinjectbuffertoolargeafter") {
-#if METAPHOR_AUDIO_FIX_ENABLE_FAULT_INJECTION
+#if METAPHOR_COMPLETE_AUDIO_PATCH_ENABLE_FAULT_INJECTION
                 config.recovery_fault_inject_buffer_too_large_after =
                     ParseInt(value, config.recovery_fault_inject_buffer_too_large_after);
 #else

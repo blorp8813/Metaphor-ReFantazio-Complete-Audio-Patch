@@ -70,9 +70,9 @@ int main()
 {
     std::puts("smoke_xaudio2 starting");
 
-    HMODULE plugin = LoadLibraryW(L"MetaphorAudioFix.asi");
+    HMODULE plugin = LoadLibraryW(L"MetaphorCompleteAudioPatch.asi");
     if (!plugin) {
-        std::printf("Failed to load MetaphorAudioFix.asi: %lu\n", GetLastError());
+        std::printf("Failed to load MetaphorCompleteAudioPatch.asi: %lu\n", GetLastError());
         return 1;
     }
 

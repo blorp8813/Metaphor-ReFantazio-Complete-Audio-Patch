@@ -6,8 +6,8 @@
 #include <cstddef>
 #include <cstdint>
 
-#ifndef METAPHOR_AUDIO_FIX_ENABLE_FAULT_INJECTION
-#define METAPHOR_AUDIO_FIX_ENABLE_FAULT_INJECTION 0
+#ifndef METAPHOR_COMPLETE_AUDIO_PATCH_ENABLE_FAULT_INJECTION
+#define METAPHOR_COMPLETE_AUDIO_PATCH_ENABLE_FAULT_INJECTION 0
 #endif
 
 namespace BufferRecovery {
@@ -86,7 +86,7 @@ public:
 
     bool ShouldInject(std::uint64_t successful_get_buffer_cycles)
     {
-#if METAPHOR_AUDIO_FIX_ENABLE_FAULT_INJECTION
+#if METAPHOR_COMPLETE_AUDIO_PATCH_ENABLE_FAULT_INJECTION
         if (!config_.enabled || config_.fault_inject_after_successes == 0 ||
             successful_get_buffer_cycles < config_.fault_inject_after_successes) {
             return false;
@@ -260,7 +260,7 @@ public:
 
 private:
     Config config_{};
-#if METAPHOR_AUDIO_FIX_ENABLE_FAULT_INJECTION
+#if METAPHOR_COMPLETE_AUDIO_PATCH_ENABLE_FAULT_INJECTION
     std::atomic<bool> fault_injected_{false};
 #endif
     std::atomic_flag recovery_gate_ = ATOMIC_FLAG_INIT;

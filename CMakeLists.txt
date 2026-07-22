@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(MetaphorAudioFix LANGUAGES C CXX)
+project(MetaphorCompleteAudioPatch LANGUAGES C CXX)
 
-option(METAPHOR_AUDIO_FIX_ENABLE_FAULT_INJECTION
+option(METAPHOR_COMPLETE_AUDIO_PATCH_ENABLE_FAULT_INJECTION
     "Compile test-only buffer-too-large fault injection into the ASI" OFF)
 
 set(CMAKE_C_STANDARD 11)
@@ -105,7 +105,7 @@ if (NOT EXISTS "${ASI_LOADER_LICENSE_PATH}")
     message(FATAL_ERROR "Could not locate bundled ASI loader license: ${ASI_LOADER_LICENSE_PATH}")
 endif()
 
-add_library(MetaphorAudioFix SHARED
+add_library(MetaphorCompleteAudioPatch SHARED
     src/config.cpp
     src/dllmain.cpp
     src/log.cpp
@@ -116,38 +116,38 @@ add_library(MetaphorAudioFix SHARED
     external-minhook/src/trampoline.c
 )
 
-target_include_directories(MetaphorAudioFix PRIVATE
+target_include_directories(MetaphorCompleteAudioPatch PRIVATE
     src
     external-minhook/include
     external-minhook/src
     external-minhook/src/hde
 )
 
-target_compile_definitions(MetaphorAudioFix PRIVATE
+target_compile_definitions(MetaphorCompleteAudioPatch PRIVATE
     NOMINMAX
     UNICODE
     _UNICODE
     WIN32_LEAN_AND_MEAN
     _WIN32_WINNT=0x0A00
     WINVER=0x0A00
-    METAPHOR_AUDIO_FIX_ENABLE_FAULT_INJECTION=$<BOOL:${METAPHOR_AUDIO_FIX_ENABLE_FAULT_INJECTION}>
+    METAPHOR_COMPLETE_AUDIO_PATCH_ENABLE_FAULT_INJECTION=$<BOOL:${METAPHOR_COMPLETE_AUDIO_PATCH_ENABLE_FAULT_INJECTION}>
 )
 
-target_link_libraries(MetaphorAudioFix PRIVATE
+target_link_libraries(MetaphorCompleteAudioPatch PRIVATE
     ole32
     uuid
     ${WINPTHREAD_STATIC_PATH}
 )
 
-target_link_options(MetaphorAudioFix PRIVATE
+target_link_options(MetaphorCompleteAudioPatch PRIVATE
     -static-libgcc
     -static-libstdc++
     -Wl,--exclude-all-symbols
 )
 
-set_target_properties(MetaphorAudioFix PROPERTIES
+set_target_properties(MetaphorCompleteAudioPatch PROPERTIES
     PREFIX ""
-    OUTPUT_NAME "MetaphorAudioFix"
+    OUTPUT_NAME "MetaphorCompleteAudioPatch"
     SUFFIX ".asi"
 )
 
@@ -166,7 +166,7 @@ add_executable(logger_shutdown_tests
 add_executable(buffer_recovery_tests tests/buffer_recovery_tests.cpp)
 
 target_include_directories(buffer_recovery_tests PRIVATE src)
-target_compile_definitions(buffer_recovery_tests PRIVATE METAPHOR_AUDIO_FIX_ENABLE_FAULT_INJECTION=1)
+target_compile_definitions(buffer_recovery_tests PRIVATE METAPHOR_COMPLETE_AUDIO_PATCH_ENABLE_FAULT_INJECTION=1)
 
 target_link_options(buffer_recovery_tests PRIVATE
     -static-libgcc
@@ -230,12 +230,12 @@ set_target_properties(buffer_recovery_tests PROPERTIES
     SUFFIX ".exe"
 )
 
-add_custom_command(TARGET MetaphorAudioFix POST_BUILD
+add_custom_command(TARGET MetaphorCompleteAudioPatch POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E rm -rf ${CMAKE_BINARY_DIR}/package
-    COMMAND ${CMAKE_STRIP} --strip-unneeded $<TARGET_FILE:MetaphorAudioFix>
+    COMMAND ${CMAKE_STRIP} --strip-unneeded $<TARGET_FILE:MetaphorCompleteAudioPatch>
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/package
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:MetaphorAudioFix> ${CMAKE_BINARY_DIR}/package/
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/MetaphorAudioFix.ini ${CMAKE_BINARY_DIR}/package/
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:MetaphorCompleteAudioPatch> ${CMAKE_BINARY_DIR}/package/
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/MetaphorCompleteAudioPatch.ini ${CMAKE_BINARY_DIR}/package/
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${WINPTHREAD_DLL_PATH} ${CMAKE_BINARY_DIR}/package/
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${WINPTHREAD_LICENSE_PATH} ${CMAKE_BINARY_DIR}/package/winpthreads-LICENSE.txt
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${ASI_LOADER_DLL_PATH} ${CMAKE_BINARY_DIR}/package/

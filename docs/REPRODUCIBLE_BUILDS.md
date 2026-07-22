@@ -31,7 +31,7 @@ cmake -S . -B build/warnings \
 cmake --build build/warnings --config Release
 ```
 
-The default CMake option `METAPHOR_AUDIO_FIX_ENABLE_FAULT_INJECTION=OFF` must remain off for public artifacts.
+The default CMake option `METAPHOR_COMPLETE_AUDIO_PATCH_ENABLE_FAULT_INJECTION=OFF` must remain off for public artifacts.
 
 ## Target-runtime logger harness
 

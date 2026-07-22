@@ -2,7 +2,7 @@
 
 ## Audio path
 
-The ASI loader starts `MetaphorAudioFix.asi` in the game process. MinHook intercepts selected XAudio2 exports and COM activation. The spatial wrapper presents the API expected by the game, creates an underlying stereo WASAPI render client, accepts the game's static spatial objects, and mixes those object buffers into the acquired stereo render buffer.
+The ASI loader starts `MetaphorCompleteAudioPatch.asi` in the game process. MinHook intercepts selected XAudio2 exports and COM activation. The spatial wrapper presents the API expected by the game, creates an underlying stereo WASAPI render client, accepts the game's static spatial objects, and mixes those object buffers into the acquired stereo render buffer.
 
 `SpatialRenderStream::BeginUpdatingAudioObjects` acquires a render buffer for one processing period. `EndUpdatingAudioObjects` mixes only the acquired frame count and releases that same count. Stream state and the object list are protected by the stream critical section; high-frequency diagnostic state uses atomics.
 

@@ -6,12 +6,12 @@ stereo fix. It does not reset, restart, replace, or reselect an audio device.
 ## Enable and configure
 
 Diagnostics are controlled by the `[Diagnostics]` section of
-`MetaphorAudioFix.ini`:
+`MetaphorCompleteAudioPatch.ini`:
 
 ```ini
 [Diagnostics]
 Enabled = true
-LogPath = MetaphorAudioFix-diagnostic.log
+LogPath = MetaphorCompleteAudioPatch-diagnostic.log
 MaxLogSizeMB = 16
 MaxLogFiles = 3
 StallTimeoutMs = 2000
@@ -24,7 +24,7 @@ BufferLogSampleRate = 100
 ErrorReminderMs = 30000
 ```
 
-An empty or relative `LogPath` is resolved beside `MetaphorAudioFix.asi`
+An empty or relative `LogPath` is resolved beside `MetaphorCompleteAudioPatch.asi`
 (normally also beside `METAPHOR.exe`). An absolute path is accepted. The logger
 rotates at `MaxLogSizeMB`, retaining at most `MaxLogFiles` rotated files in
 addition to the active log.
@@ -120,7 +120,7 @@ writer and wake handles are closed only after `WaitForSingleObject` confirms
 writer termination. A timeout retains every handle and waits again outside the
 loader lock.
 
-The exported `RequestMetaphorAudioFixDiagnosticShutdown` function signals this
+The exported `RequestMetaphorCompleteAudioPatchDiagnosticShutdown` function signals this
 controlled path. A DLL self-reference is retained for the process lifetime so
 explicit loader activity cannot unload executable callback/vtable code while a
 registration or worker could still reference it. `DLL_PROCESS_DETACH` performs

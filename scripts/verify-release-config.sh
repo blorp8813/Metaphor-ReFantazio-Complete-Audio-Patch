@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ini="${root_dir}/MetaphorAudioFix.ini"
+ini="${root_dir}/MetaphorCompleteAudioPatch.ini"
 
 value_in_section() {
   local section="$1" key="$2"

@@ -36,4 +36,4 @@ jobs:
       - name: Build Windows x86-64 targets
         run: cmake --build build/warnings --config Release
       - name: Confirm public fault injection is disabled
-        run: grep -q '^METAPHOR_AUDIO_FIX_ENABLE_FAULT_INJECTION:BOOL=OFF$' build/warnings/CMakeCache.txt
+        run: grep -q '^METAPHOR_COMPLETE_AUDIO_PATCH_ENABLE_FAULT_INJECTION:BOOL=OFF$' build/warnings/CMakeCache.txt
