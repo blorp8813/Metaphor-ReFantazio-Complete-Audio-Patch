@@ -154,6 +154,6 @@ See [Reproducible builds](docs/REPRODUCIBLE_BUILDS.md) for the complete warning-
 - **Additional work in this project:** random audio-cutout recovery, diagnostics, tests, safety hardening, and packaging
 - **Third-party components:** MinHook/HDE and Ultimate ASI Loader, under their included licenses
 
-The original MIT `LICENSE` and copyright notice are preserved unchanged. See [NOTICE.md](NOTICE.md) and [THIRD_PARTY.md](THIRD_PARTY.md) for full attribution.
+Rajan Singh's original MIT copyright notice is preserved in `LICENSE`, alongside a separate `blorp8813` notice for this project's new contributions. See [NOTICE.md](NOTICE.md) and [THIRD_PARTY.md](THIRD_PARTY.md) for full attribution.
 
 This is an unofficial community project. It is not affiliated with or endorsed by ATLUS, SEGA, CodeWeavers, Valve, Microsoft, or Apple. Use it at your own risk.

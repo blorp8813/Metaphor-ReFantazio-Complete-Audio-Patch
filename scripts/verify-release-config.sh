@@ -48,14 +48,19 @@ assert_value Recovery RecoveryWindowMs 30000
 assert_value Recovery RecoveryCooldownMs 1000
 assert_value Recovery FaultInjectBufferTooLargeAfter 0
 
-expected_license_sha256="bf6b1e75b26b647f2432fc816659371dd245b97112158310fad82c5c88a06d13"
+expected_license_sha256="5edfd1b8f63b3fc659be327df16940fc21c088fe42e151f2d2c9e3d8911f7d15"
+copyright_line="Copyright (c) 2026 blorp8813"
+grep -Fxq "${copyright_line}" "${root_dir}/LICENSE" || {
+  echo "Release configuration error: project copyright notice is missing" >&2
+  exit 1
+}
 if command -v sha256sum >/dev/null 2>&1; then
-  actual_license_sha256="$(sha256sum "${root_dir}/LICENSE" | awk '{print $1}')"
+  actual_license_sha256="$(sed "/^${copyright_line}$/d" "${root_dir}/LICENSE" | sha256sum | awk '{print $1}')"
 else
-  actual_license_sha256="$(shasum -a 256 "${root_dir}/LICENSE" | awk '{print $1}')"
+  actual_license_sha256="$(sed "/^${copyright_line}$/d" "${root_dir}/LICENSE" | shasum -a 256 | awk '{print $1}')"
 fi
 if [[ "${actual_license_sha256}" != "${expected_license_sha256}" ]]; then
-  echo "Release configuration error: upstream LICENSE changed" >&2
+  echo "Release configuration error: upstream MIT license or original copyright notice changed" >&2
   exit 1
 fi
 

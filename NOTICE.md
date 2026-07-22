@@ -2,7 +2,7 @@
 
 Metaphor: ReFantazio Complete Audio Patch is an independent project based on the open-source [`MetaphorMacosAudioFix`](https://github.com/woahitsraj/MetaphorMacosAudioFix) project by Rajan Singh. Rajan Singh created the original multichannel spatial-audio and dialogue fix. This project preserves and credits that work while adding a fix for random audio cutouts during gameplay, diagnostic tools, tests, safety hardening, and release packaging.
 
-The original code and this project are distributed under the MIT License in `LICENSE`. The original copyright and license text are preserved unchanged.
+The original code and this project are distributed under the MIT License in `LICENSE`. Rajan Singh's original copyright notice is preserved. The separate `blorp8813` copyright notice covers the new audio-cutout recovery, diagnostics, testing, safety hardening, installer, documentation, and release work contributed to this independent project.
 
 This repository also contains:
 
