@@ -38,13 +38,14 @@ The internal plugin filenames remain `MetaphorAudioFix.*` because those are the 
    - `winmm.dll`
    - `libwinpthread-1.dll`
 
-6. In the game's Steam **Launch Options**, enter:
-
-   ```text
-   WINEDLLOVERRIDES="winmm=n,b" %command%
-   ```
-
-7. Restart Steam inside CrossOver or Wine, then launch the game normally.
+6. Open CrossOver and select the bottle that contains Steam and the game.
+7. Open **Wine Configuration** for that bottle.
+8. Select the **Libraries** tab.
+9. Under **New override for library**, enter or select `winmm`, then click **Add**.
+10. Select the new `winmm` entry and click **Edit**.
+11. Choose **Native, then Builtin**, then click **OK**.
+12. Click **Apply** and **OK** to close Wine Configuration.
+13. Fully restart Steam inside the bottle, then launch the game normally.
 
 If another mod already installed `winmm.dll`, do not overwrite it blindly. It may be a shared ASI loader required by that mod.
 
@@ -71,8 +72,8 @@ When the temporary audio-buffer problem occurs, the patch writes a small recover
 ### The patch does not load
 
 - Confirm all four files are beside the correct `METAPHOR.exe`.
-- Confirm the Steam launch option is exactly `WINEDLLOVERRIDES="winmm=n,b" %command%`.
-- Fully restart Steam inside the bottle after changing the files or launch option.
+- Open Wine Configuration for the correct CrossOver bottle and confirm the **Libraries** tab shows `winmm` set to **Native, then Builtin**.
+- Fully restart Steam inside the bottle after changing the files or library override.
 - Check whether another mod supplies a conflicting `winmm.dll`.
 
 ### Dialogue is still quiet or hollow
@@ -97,7 +98,7 @@ When reporting a problem, include your macOS version, Mac model and chip, CrossO
 2. Remove `MetaphorAudioFix.asi` and `MetaphorAudioFix.ini` from the game folder.
 3. Remove `libwinpthread-1.dll` if no other plugin uses it.
 4. Remove `winmm.dll` only if no other mod depends on it.
-5. Remove the Steam launch option only if no other ASI mod needs the `winmm` override.
+5. In CrossOver's Wine Configuration, remove the `winmm` library override only if no other ASI mod needs it.
 
 The patch does not modify saves, Steam Cloud data, game data, or global CrossOver settings.
 
