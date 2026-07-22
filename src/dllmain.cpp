@@ -1,6 +1,7 @@
 #include "stdafx.h"
 
 #include "config.hpp"
+#include "buffer_recovery.hpp"
 #include "log.hpp"
 #include "stall_detector.hpp"
 
@@ -634,6 +635,62 @@ void BuildStereoFloatFormat(WAVEFORMATEXTENSIBLE& format, UINT32 sample_rate)
 
 class SpatialAudioWrapper;
 
+class AudioClientRecoveryBackend {
+public:
+    AudioClientRecoveryBackend(IAudioClient* audio_client,
+                               IAudioRenderClient* render_client,
+                               std::atomic<bool>& started)
+        : audio_client_(audio_client), render_client_(render_client), started_(started)
+    {
+    }
+
+    BufferRecovery::Hr GetBuffer(std::uint32_t frames, void** buffer)
+    {
+        return static_cast<BufferRecovery::Hr>(
+            render_client_->GetBuffer(frames, reinterpret_cast<BYTE**>(buffer)));
+    }
+
+    BufferRecovery::Hr GetCurrentPadding(std::uint32_t* padding)
+    {
+        return static_cast<BufferRecovery::Hr>(audio_client_->GetCurrentPadding(padding));
+    }
+
+    BufferRecovery::Hr Stop()
+    {
+        const HRESULT hr = audio_client_->Stop();
+        if (SUCCEEDED(hr)) {
+            started_.store(false, std::memory_order_release);
+        }
+        return static_cast<BufferRecovery::Hr>(hr);
+    }
+
+    BufferRecovery::Hr Reset()
+    {
+        const HRESULT hr = audio_client_->Reset();
+        if (SUCCEEDED(hr)) {
+            started_.store(false, std::memory_order_release);
+        }
+        return static_cast<BufferRecovery::Hr>(hr);
+    }
+
+    BufferRecovery::Hr Start()
+    {
+        const HRESULT hr = audio_client_->Start();
+        const bool previous_started = started_.load(std::memory_order_acquire);
+        started_.store(StartedStateAfterStartResult(previous_started, static_cast<std::int32_t>(hr)),
+                       std::memory_order_release);
+        return static_cast<BufferRecovery::Hr>(hr);
+    }
+
+    std::uint64_t NowTicks() const { return QpcNow(); }
+    bool IsStarted() const { return started_.load(std::memory_order_acquire); }
+
+private:
+    IAudioClient* audio_client_ = nullptr;
+    IAudioRenderClient* render_client_ = nullptr;
+    std::atomic<bool>& started_;
+};
+
 class SpatialRenderObject final : public ISpatialAudioObject {
 public:
     SpatialRenderObject(class SpatialRenderStream* stream, AudioObjectType type, UINT32 frames);
@@ -678,6 +735,7 @@ public:
     HRESULT STDMETHODCALLTYPE EndUpdatingAudioObjects() override;
     HRESULT STDMETHODCALLTYPE ActivateSpatialAudioObject(AudioObjectType type, ISpatialAudioObject** out) override;
     bool MixToStereo();
+    void LogBufferRecoveryOutcome(const BufferRecovery::AcquireOutcome& outcome);
     void StartWatchdog();
     void StopWatchdog();
     static DWORD WINAPI WatchdogThread(void* context);
@@ -693,6 +751,7 @@ public:
     HANDLE event_handle_ = nullptr;
     AudioObjectType static_mask_ = AudioObjectType_None;
     UINT32 period_frames_ = 0;
+    UINT32 buffer_capacity_frames_ = 0;
     UINT32 update_frames_ = ~0u;
     float* render_buffer_ = nullptr;
     WAVEFORMATEX* object_format_ = nullptr;
@@ -708,8 +767,11 @@ public:
     std::atomic<std::uint64_t> total_submitted_frames_{0};
     std::atomic<std::uint64_t> get_buffer_failures_{0};
     std::atomic<std::uint64_t> release_buffer_failures_{0};
+    std::atomic<std::uint64_t> successful_get_buffer_cycles_{0};
     std::atomic<long> last_get_buffer_hr_{S_OK};
     std::atomic<long> last_release_buffer_hr_{S_OK};
+    bool recovery_in_progress_ = false;
+    BufferRecovery::Coordinator recovery_;
 
     friend class SpatialRenderObject;
 };
@@ -853,7 +915,17 @@ SpatialRenderStream::SpatialRenderStream(SpatialAudioWrapper* owner, const Spati
       notify_(params.NotifyObject),
       event_handle_(params.EventHandle),
       static_mask_(params.StaticObjectTypeMask),
-      object_format_(AllocateWaveFormatCopy(params.ObjectFormat))
+      object_format_(AllocateWaveFormatCopy(params.ObjectFormat)),
+      recovery_({
+          g_config.recovery_enabled,
+          g_config.recovery_adaptive_buffer_retry,
+          g_config.recovery_reset_restart_fallback,
+          static_cast<std::uint32_t>(g_config.recovery_maximum_attempts_per_failure),
+          static_cast<std::uint32_t>(g_config.recovery_maximum_recoveries_per_window),
+          MillisecondsToQpc(g_config.recovery_window_ms),
+          MillisecondsToQpc(g_config.recovery_cooldown_ms),
+          static_cast<std::uint64_t>(g_config.recovery_fault_inject_buffer_too_large_after),
+      })
 {
     InitializeCriticalSection(&lock_);
     g_active_spatial_streams.fetch_add(1, std::memory_order_relaxed);
@@ -961,6 +1033,37 @@ HRESULT SpatialRenderStream::ActivateOutput()
         return hr;
     }
 
+    period_frames_ = static_cast<UINT32>(MulDiv(default_period, output_format_.Format.nSamplesPerSec, 10000000));
+    if (period_frames_ == 0) {
+        period_frames_ = 1;
+    }
+
+    hr = audio_client_->GetBufferSize(&buffer_capacity_frames_);
+    Log::Info("IAudioClient::GetBufferSize stream=%p result=0x%08lX capacity_frames=%u period_frames=%u",
+              this,
+              static_cast<unsigned long>(hr),
+              buffer_capacity_frames_,
+              period_frames_);
+    if (FAILED(hr) || buffer_capacity_frames_ == 0) {
+        Log::Error("IAudioClient::GetBufferSize initialization_error stream=%p result=0x%08lX capacity_frames=%u",
+                   this, static_cast<unsigned long>(hr), buffer_capacity_frames_);
+        return FAILED(hr) ? hr : E_FAIL;
+    }
+
+    UINT32 initial_padding = 0;
+    const HRESULT initial_padding_hr = audio_client_->GetCurrentPadding(&initial_padding);
+    Log::Info("Spatial buffer geometry stream=%p capacity_frames=%u period_frames=%u initial_padding_hr=0x%08lX initial_padding=%u format=%s",
+              this,
+              buffer_capacity_frames_,
+              period_frames_,
+              static_cast<unsigned long>(initial_padding_hr),
+              initial_padding,
+              DescribeWaveFormat(&output_format_.Format).c_str());
+    if (FAILED(initial_padding_hr)) {
+        Log::Error("IAudioClient::GetCurrentPadding initial failed stream=%p result=0x%08lX",
+                   this, static_cast<unsigned long>(initial_padding_hr));
+    }
+
     hr = audio_client_->SetEventHandle(event_handle_);
     Log::Info("IAudioClient::SetEventHandle stream=%p event=%p result=0x%08lX",
               this, event_handle_, static_cast<unsigned long>(hr));
@@ -996,13 +1099,10 @@ HRESULT SpatialRenderStream::ActivateOutput()
         }
     }
 
-    period_frames_ = static_cast<UINT32>(MulDiv(default_period, output_format_.Format.nSamplesPerSec, 10000000));
-    if (period_frames_ == 0) {
-        period_frames_ = 1;
-    }
     update_frames_ = ~0u;
     StartWatchdog();
-    Log::Info("Spatial output activated stream=%p period_frames=%u", this, period_frames_);
+    Log::Info("Spatial output activated stream=%p period_frames=%u capacity_frames=%u recovery_enabled=%d",
+              this, period_frames_, buffer_capacity_frames_, g_config.recovery_enabled);
     return S_OK;
 }
 
@@ -1079,12 +1179,21 @@ HRESULT STDMETHODCALLTYPE SpatialRenderStream::GetService(REFIID, void** service
 
 HRESULT STDMETHODCALLTYPE SpatialRenderStream::Start()
 {
+    EnterCriticalSection(&lock_);
+    if (recovery_in_progress_) {
+        LeaveCriticalSection(&lock_);
+        Log::Error("IAudioClient::Start reentrant_during_recovery stream=%p result=0x%08lX",
+                   this, static_cast<unsigned long>(AUDCLNT_E_BUFFER_OPERATION_PENDING));
+        return AUDCLNT_E_BUFFER_OPERATION_PENDING;
+    }
     const HRESULT hr = audio_client_ ? audio_client_->Start() : E_FAIL;
     const bool previous_started = started_.load(std::memory_order_acquire);
     started_.store(StartedStateAfterStartResult(previous_started, static_cast<std::int32_t>(hr)),
                    std::memory_order_release);
+    const bool started = started_.load(std::memory_order_acquire);
+    LeaveCriticalSection(&lock_);
     Log::Info("IAudioClient::Start stream=%p result=0x%08lX started=%d",
-              this, static_cast<unsigned long>(hr), started_.load(std::memory_order_acquire));
+              this, static_cast<unsigned long>(hr), started);
     if (FAILED(hr)) {
         Log::Error("IAudioClient::Start failed stream=%p result=0x%08lX", this, static_cast<unsigned long>(hr));
     }
@@ -1093,12 +1202,21 @@ HRESULT STDMETHODCALLTYPE SpatialRenderStream::Start()
 
 HRESULT STDMETHODCALLTYPE SpatialRenderStream::Stop()
 {
+    EnterCriticalSection(&lock_);
+    if (recovery_in_progress_) {
+        LeaveCriticalSection(&lock_);
+        Log::Error("IAudioClient::Stop reentrant_during_recovery stream=%p result=0x%08lX",
+                   this, static_cast<unsigned long>(AUDCLNT_E_BUFFER_OPERATION_PENDING));
+        return AUDCLNT_E_BUFFER_OPERATION_PENDING;
+    }
     const HRESULT hr = audio_client_ ? audio_client_->Stop() : E_FAIL;
     if (SUCCEEDED(hr)) {
         started_.store(false, std::memory_order_release);
     }
+    const bool started = started_.load(std::memory_order_acquire);
+    LeaveCriticalSection(&lock_);
     Log::Info("IAudioClient::Stop stream=%p result=0x%08lX started=%d",
-              this, static_cast<unsigned long>(hr), started_.load());
+              this, static_cast<unsigned long>(hr), started);
     if (FAILED(hr)) {
         Log::Error("IAudioClient::Stop failed stream=%p result=0x%08lX", this, static_cast<unsigned long>(hr));
     }
@@ -1107,14 +1225,23 @@ HRESULT STDMETHODCALLTYPE SpatialRenderStream::Stop()
 
 HRESULT STDMETHODCALLTYPE SpatialRenderStream::Reset()
 {
+    EnterCriticalSection(&lock_);
+    if (recovery_in_progress_) {
+        LeaveCriticalSection(&lock_);
+        Log::Error("IAudioClient::Reset reentrant_during_recovery stream=%p result=0x%08lX",
+                   this, static_cast<unsigned long>(AUDCLNT_E_BUFFER_OPERATION_PENDING));
+        return AUDCLNT_E_BUFFER_OPERATION_PENDING;
+    }
     const HRESULT hr = audio_client_ ? audio_client_->Reset() : E_FAIL;
     if (SUCCEEDED(hr)) {
         started_.store(false, std::memory_order_release);
         last_non_silent_qpc_ = 0;
         last_callback_qpc_ = 0;
     }
+    const bool started = started_.load(std::memory_order_acquire);
+    LeaveCriticalSection(&lock_);
     Log::Info("IAudioClient::Reset stream=%p result=0x%08lX started=%d",
-              this, static_cast<unsigned long>(hr), started_.load(std::memory_order_acquire));
+              this, static_cast<unsigned long>(hr), started);
     if (FAILED(hr)) {
         Log::Error("IAudioClient::Reset failed stream=%p result=0x%08lX", this, static_cast<unsigned long>(hr));
     }
@@ -1135,28 +1262,56 @@ HRESULT STDMETHODCALLTYPE SpatialRenderStream::BeginUpdatingAudioObjects(UINT32*
         Log::Warn("Audio event callback/BeginUpdatingAudioObjects out of order stream=%p", this);
         return SPTLAUDCLNT_E_OUT_OF_ORDER;
     }
+    if (recovery_in_progress_) {
+        LeaveCriticalSection(&lock_);
+        Log::Error("BeginUpdatingAudioObjects reentrant_during_recovery stream=%p result=0x%08lX",
+                   this, static_cast<unsigned long>(AUDCLNT_E_BUFFER_OPERATION_PENDING));
+        return AUDCLNT_E_BUFFER_OPERATION_PENDING;
+    }
 
-    update_frames_ = period_frames_;
-    HRESULT hr = render_client_->GetBuffer(update_frames_, reinterpret_cast<BYTE**>(&render_buffer_));
+    AudioClientRecoveryBackend backend(audio_client_, render_client_, started_);
+    const bool inject_buffer_too_large = recovery_.ShouldInject(
+        successful_get_buffer_cycles_.load(std::memory_order_acquire));
+    recovery_in_progress_ = true;
+    BufferRecovery::AcquireOutcome outcome = recovery_.Acquire(
+        backend, period_frames_, buffer_capacity_frames_, inject_buffer_too_large);
+    recovery_in_progress_ = false;
+
+    if (outcome.reset_succeeded) {
+        last_non_silent_qpc_.store(0, std::memory_order_release);
+        last_callback_qpc_.store(0, std::memory_order_release);
+    }
     const std::uint64_t now = QpcNow();
     last_callback_qpc_.store(now, std::memory_order_release);
-    const std::uint64_t operation_count = get_buffer_count_.fetch_add(1, std::memory_order_relaxed) + 1;
+    const std::uint64_t operation_count =
+        get_buffer_count_.fetch_add(outcome.get_buffer_calls, std::memory_order_relaxed) + outcome.get_buffer_calls;
+    HRESULT hr = static_cast<HRESULT>(outcome.hr);
     const HRESULT previous_hr = static_cast<HRESULT>(last_get_buffer_hr_.exchange(hr, std::memory_order_acq_rel));
-    if (FAILED(hr)) {
+    if (FAILED(hr) || !outcome.buffer || outcome.frames == 0 || outcome.frames > period_frames_) {
+        if (SUCCEEDED(hr)) {
+            hr = E_FAIL;
+            last_get_buffer_hr_.store(hr, std::memory_order_release);
+        }
         get_buffer_failures_.fetch_add(1, std::memory_order_relaxed);
         update_frames_ = ~0u;
         render_buffer_ = nullptr;
         LeaveCriticalSection(&lock_);
+        LogBufferRecoveryOutcome(outcome);
         if (hr != previous_hr) {
-            Log::Error("IAudioRenderClient::GetBuffer failure_transition stream=%p count=%llu frames=%u previous=0x%08lX result=0x%08lX",
+            Log::Error("IAudioRenderClient::GetBuffer failure_transition stream=%p count=%llu frames=%u physical_calls=%u previous=0x%08lX result=0x%08lX",
                        this,
                        static_cast<unsigned long long>(operation_count),
                        period_frames_,
+                       outcome.get_buffer_calls,
                        static_cast<unsigned long>(previous_hr),
                        static_cast<unsigned long>(hr));
         }
         return hr;
     }
+
+    update_frames_ = outcome.frames;
+    render_buffer_ = static_cast<float*>(outcome.buffer);
+    successful_get_buffer_cycles_.fetch_add(1, std::memory_order_relaxed);
 
     if (FAILED(previous_hr)) {
         Log::Warn("IAudioRenderClient::GetBuffer recovered stream=%p count=%llu previous=0x%08lX result=0x%08lX",
@@ -1175,13 +1330,115 @@ HRESULT STDMETHODCALLTYPE SpatialRenderStream::BeginUpdatingAudioObjects(UINT32*
     }
 
     for (SpatialRenderObject* object : objects_) {
-        std::fill(object->Samples().begin(), object->Samples().end(), 0.0f);
+        std::fill(object->Samples().begin(), object->Samples().begin() + update_frames_, 0.0f);
     }
 
     *dynamic_count = 0;
     *frames = update_frames_;
     LeaveCriticalSection(&lock_);
+    LogBufferRecoveryOutcome(outcome);
     return S_OK;
+}
+
+void SpatialRenderStream::LogBufferRecoveryOutcome(const BufferRecovery::AcquireOutcome& outcome)
+{
+    if (outcome.fault_injected) {
+        Log::Warn("FAULT_INJECTION_BUFFER_TOO_LARGE stream=%p successful_cycles=%llu threshold=%d",
+                  this,
+                  static_cast<unsigned long long>(successful_get_buffer_cycles_.load(std::memory_order_relaxed)),
+                  g_config.recovery_fault_inject_buffer_too_large_after);
+    }
+    if (!outcome.buffer_too_large_caught) {
+        return;
+    }
+
+    Log::Warn("BUFFER_TOO_LARGE_CAUGHT stream=%p original_request=%u capacity=%u padding_hr=0x%08lX padding=%u available=%u retry=%u retry_hr=0x%08lX",
+              this,
+              outcome.original_request_frames,
+              outcome.buffer_capacity_frames,
+              static_cast<unsigned long>(outcome.padding_hr),
+              outcome.padding_frames,
+              outcome.available_frames,
+              outcome.adaptive_retry_frames,
+              static_cast<unsigned long>(outcome.adaptive_hr));
+
+    if (outcome.adaptive_succeeded) {
+        Log::Warn("ADAPTIVE_BUFFER_RETRY_SUCCEEDED stream=%p original_request=%u capacity=%u padding=%u available=%u retry=%u result=0x%08lX",
+                  this,
+                  outcome.original_request_frames,
+                  outcome.buffer_capacity_frames,
+                  outcome.padding_frames,
+                  outcome.available_frames,
+                  outcome.adaptive_retry_frames,
+                  static_cast<unsigned long>(outcome.adaptive_hr));
+    } else if (g_config.recovery_adaptive_buffer_retry) {
+        Log::Error("ADAPTIVE_BUFFER_RETRY_FAILED stream=%p attempted=%d original_request=%u capacity=%u padding_hr=0x%08lX padding=%u available=%u retry=%u result=0x%08lX",
+                   this,
+                   outcome.adaptive_attempted,
+                   outcome.original_request_frames,
+                   outcome.buffer_capacity_frames,
+                   static_cast<unsigned long>(outcome.padding_hr),
+                   outcome.padding_frames,
+                   outcome.available_frames,
+                   outcome.adaptive_retry_frames,
+                   static_cast<unsigned long>(outcome.adaptive_hr));
+    }
+
+    if (outcome.circuit_breaker_open) {
+        Log::Error("RECOVERY_CIRCUIT_BREAKER_OPEN stream=%p maximum_per_window=%d window_ms=%d cooldown_ms=%d",
+                   this,
+                   g_config.recovery_maximum_recoveries_per_window,
+                   g_config.recovery_window_ms,
+                   g_config.recovery_cooldown_ms);
+        return;
+    }
+    if (!outcome.recovery_started) {
+        return;
+    }
+
+    const double elapsed_ms = g_qpc_frequency.QuadPart > 0
+        ? static_cast<double>(outcome.recovery_elapsed_ticks) * 1000.0 /
+              static_cast<double>(g_qpc_frequency.QuadPart)
+        : 0.0;
+    Log::Warn("BUFFER_RECOVERY_STARTED stream=%p stop_hr=0x%08lX reset_hr=0x%08lX start_hr=0x%08lX",
+              this,
+              static_cast<unsigned long>(outcome.stop_hr),
+              static_cast<unsigned long>(outcome.reset_hr),
+              static_cast<unsigned long>(outcome.start_hr));
+    if (outcome.reset_succeeded) {
+        Log::Warn("BUFFER_RECOVERY_RESET_SUCCEEDED stream=%p reset_hr=0x%08lX started_after_reset=%d",
+                  this,
+                  static_cast<unsigned long>(outcome.reset_hr),
+                  outcome.started_after_reset);
+    }
+    if (outcome.recovery_succeeded) {
+        Log::Warn("BUFFER_RECOVERY_SUCCEEDED stream=%p stop_hr=0x%08lX reset_hr=0x%08lX start_hr=0x%08lX started_after_start=%d padding_hr=0x%08lX padding=%u available=%u retry=%u retry_hr=0x%08lX elapsed_ms=%.3f",
+                  this,
+                  static_cast<unsigned long>(outcome.stop_hr),
+                  static_cast<unsigned long>(outcome.reset_hr),
+                  static_cast<unsigned long>(outcome.start_hr),
+                  outcome.started_after_start,
+                  static_cast<unsigned long>(outcome.recovery_padding_hr),
+                  outcome.recovery_padding_frames,
+                  outcome.recovery_available_frames,
+                  outcome.recovery_retry_frames,
+                  static_cast<unsigned long>(outcome.recovery_retry_hr),
+                  elapsed_ms);
+    } else if (outcome.recovery_failed) {
+        Log::Error("BUFFER_RECOVERY_FAILED stream=%p stop_hr=0x%08lX reset_hr=0x%08lX start_hr=0x%08lX started_after_reset=%d started_after_start=%d padding_hr=0x%08lX padding=%u available=%u retry=%u retry_hr=0x%08lX elapsed_ms=%.3f",
+                   this,
+                   static_cast<unsigned long>(outcome.stop_hr),
+                   static_cast<unsigned long>(outcome.reset_hr),
+                   static_cast<unsigned long>(outcome.start_hr),
+                   outcome.started_after_reset,
+                   outcome.started_after_start,
+                   static_cast<unsigned long>(outcome.recovery_padding_hr),
+                   outcome.recovery_padding_frames,
+                   outcome.recovery_available_frames,
+                   outcome.recovery_retry_frames,
+                   static_cast<unsigned long>(outcome.recovery_retry_hr),
+                   elapsed_ms);
+    }
 }
 
 HRESULT STDMETHODCALLTYPE SpatialRenderStream::EndUpdatingAudioObjects()
@@ -1200,6 +1457,7 @@ HRESULT STDMETHODCALLTYPE SpatialRenderStream::EndUpdatingAudioObjects()
 
     const bool non_silent = MixToStereo();
     const UINT32 frames = update_frames_;
+    const HRESULT hr = render_client_->ReleaseBuffer(frames, 0);
     update_frames_ = ~0u;
     render_buffer_ = nullptr;
     LeaveCriticalSection(&lock_);
@@ -1208,7 +1466,6 @@ HRESULT STDMETHODCALLTYPE SpatialRenderStream::EndUpdatingAudioObjects()
     if (non_silent) {
         last_non_silent_qpc_.store(now, std::memory_order_release);
     }
-    const HRESULT hr = render_client_->ReleaseBuffer(frames, 0);
     const std::uint64_t operation_count = release_buffer_count_.fetch_add(1, std::memory_order_relaxed) + 1;
     const HRESULT previous_hr = static_cast<HRESULT>(last_release_buffer_hr_.exchange(hr, std::memory_order_acq_rel));
     if (FAILED(hr)) {
@@ -1335,19 +1592,28 @@ void SpatialRenderStream::WatchdogLoop()
 
     while (WaitForSingleObject(watchdog_stop_event_, static_cast<DWORD>(g_config.watchdog_poll_interval_ms)) == WAIT_TIMEOUT) {
         const std::uint64_t now = QpcNow();
+        const bool periodic = last_status == 0 || now - last_status >= status_interval;
         UINT32 padding = 0;
-        const HRESULT padding_hr = audio_client_ ? audio_client_->GetCurrentPadding(&padding) : E_FAIL;
-
         UINT64 position = 0;
         UINT64 qpc_position_100ns = 0;
-        const HRESULT position_hr = audio_clock_ ? audio_clock_->GetPosition(&position, &qpc_position_100ns) : E_NOINTERFACE;
+        UINT64 frequency = 0;
+        HRESULT padding_hr = E_PENDING;
+        HRESULT position_hr = E_PENDING;
+        HRESULT frequency_hr = E_PENDING;
+        if (!TryEnterCriticalSection(&lock_)) {
+            continue;
+        }
+        padding_hr = audio_client_ ? audio_client_->GetCurrentPadding(&padding) : E_FAIL;
+        position_hr = audio_clock_ ? audio_clock_->GetPosition(&position, &qpc_position_100ns) : E_NOINTERFACE;
+        if (periodic) {
+            frequency_hr = audio_clock_ ? audio_clock_->GetFrequency(&frequency) : E_NOINTERFACE;
+        }
+        LeaveCriticalSection(&lock_);
+
         log_hr_state("IAudioClient::GetCurrentPadding", padding_hr, padding_state, now);
         log_hr_state("IAudioClock::GetPosition", position_hr, position_state, now);
 
-        const bool periodic = last_status == 0 || now - last_status >= status_interval;
         if (periodic) {
-            UINT64 frequency = 0;
-            const HRESULT frequency_hr = audio_clock_ ? audio_clock_->GetFrequency(&frequency) : E_NOINTERFACE;
             log_hr_state("IAudioClock::GetFrequency", frequency_hr, frequency_state, now);
             Log::Info("Watchdog status stream=%p started=%d padding_hr=0x%08lX padding=%u clock_hr=0x%08lX position=%llu qpc_position_100ns=%llu frequency_hr=0x%08lX frequency=%llu get_buffers=%llu release_buffers=%llu total_frames=%llu get_failures=%llu release_failures=%llu last_get_hr=0x%08lX last_release_hr=0x%08lX last_callback_qpc=%llu last_non_silent_qpc=%llu",
                       this,
@@ -2314,6 +2580,19 @@ DWORD WINAPI MainThread(void*)
               g_config.diagnostics_detailed_buffer_logging,
               g_config.diagnostics_buffer_log_sample_rate,
               g_config.diagnostics_error_reminder_ms);
+    Log::Info("Config: recovery_enabled=%d adaptive_buffer_retry=%d reset_restart_fallback=%d recreate_client_fallback=%d maximum_attempts_per_failure=%d maximum_recoveries_per_window=%d recovery_window_ms=%d recovery_cooldown_ms=%d fault_inject_buffer_too_large_after=%d",
+              g_config.recovery_enabled,
+              g_config.recovery_adaptive_buffer_retry,
+              g_config.recovery_reset_restart_fallback,
+              g_config.recovery_recreate_client_fallback,
+              g_config.recovery_maximum_attempts_per_failure,
+              g_config.recovery_maximum_recoveries_per_window,
+              g_config.recovery_window_ms,
+              g_config.recovery_cooldown_ms,
+              g_config.recovery_fault_inject_buffer_too_large_after);
+    if (g_config.recovery_recreate_client_fallback) {
+        Log::Warn("RecreateClientFallback requested but not implemented; option ignored");
+    }
     Log::Info("Config: module_poll_timeout_ms=%d module_poll_interval_ms=%d",
               g_config.module_poll_timeout_ms,
               g_config.module_poll_interval_ms);

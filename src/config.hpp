@@ -26,6 +26,15 @@ struct Config {
     bool diagnostics_detailed_buffer_logging = false;
     int diagnostics_buffer_log_sample_rate = 100;
     int diagnostics_error_reminder_ms = 30000;
+    bool recovery_enabled = false;
+    bool recovery_adaptive_buffer_retry = true;
+    bool recovery_reset_restart_fallback = true;
+    bool recovery_recreate_client_fallback = false;
+    int recovery_maximum_attempts_per_failure = 1;
+    int recovery_maximum_recoveries_per_window = 3;
+    int recovery_window_ms = 30000;
+    int recovery_cooldown_ms = 1000;
+    int recovery_fault_inject_buffer_too_large_after = 0;
     int module_poll_timeout_ms = 120000;
     int module_poll_interval_ms = 250;
 };

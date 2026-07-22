@@ -139,6 +139,29 @@ Config LoadConfig(const std::filesystem::path& path)
             } else if (key == "errorreminderms") {
                 config.diagnostics_error_reminder_ms = ParseInt(value, config.diagnostics_error_reminder_ms);
             }
+        } else if (current_section == "recovery") {
+            if (key == "enabled") {
+                config.recovery_enabled = ParseBool(value, config.recovery_enabled);
+            } else if (key == "adaptivebufferretry") {
+                config.recovery_adaptive_buffer_retry = ParseBool(value, config.recovery_adaptive_buffer_retry);
+            } else if (key == "resetrestartfallback") {
+                config.recovery_reset_restart_fallback = ParseBool(value, config.recovery_reset_restart_fallback);
+            } else if (key == "recreateclientfallback") {
+                config.recovery_recreate_client_fallback = ParseBool(value, config.recovery_recreate_client_fallback);
+            } else if (key == "maximumattemptsperfailure") {
+                config.recovery_maximum_attempts_per_failure =
+                    ParseInt(value, config.recovery_maximum_attempts_per_failure);
+            } else if (key == "maximumrecoveriesperwindow") {
+                config.recovery_maximum_recoveries_per_window =
+                    ParseInt(value, config.recovery_maximum_recoveries_per_window);
+            } else if (key == "recoverywindowms") {
+                config.recovery_window_ms = ParseInt(value, config.recovery_window_ms);
+            } else if (key == "recoverycooldownms") {
+                config.recovery_cooldown_ms = ParseInt(value, config.recovery_cooldown_ms);
+            } else if (key == "faultinjectbuffertoolargeafter") {
+                config.recovery_fault_inject_buffer_too_large_after =
+                    ParseInt(value, config.recovery_fault_inject_buffer_too_large_after);
+            }
         } else if (current_section == "bootstrap") {
             if (key == "modulepolltimeoutms") {
                 config.module_poll_timeout_ms = ParseInt(value, config.module_poll_timeout_ms);
@@ -163,6 +186,14 @@ Config LoadConfig(const std::filesystem::path& path)
     config.diagnostics_periodic_status_ms = std::clamp(config.diagnostics_periodic_status_ms, 100, 60000);
     config.diagnostics_buffer_log_sample_rate = std::clamp(config.diagnostics_buffer_log_sample_rate, 1, 100000);
     config.diagnostics_error_reminder_ms = std::clamp(config.diagnostics_error_reminder_ms, 1000, 600000);
+    // A single failed processing pass is never allowed to loop recovery.
+    config.recovery_maximum_attempts_per_failure = 1;
+    config.recovery_maximum_recoveries_per_window =
+        std::clamp(config.recovery_maximum_recoveries_per_window, 1, 100);
+    config.recovery_window_ms = std::clamp(config.recovery_window_ms, 1000, 600000);
+    config.recovery_cooldown_ms = std::clamp(config.recovery_cooldown_ms, 0, 60000);
+    config.recovery_fault_inject_buffer_too_large_after =
+        std::clamp(config.recovery_fault_inject_buffer_too_large_after, 0, 1000000000);
 
     return config;
 }
