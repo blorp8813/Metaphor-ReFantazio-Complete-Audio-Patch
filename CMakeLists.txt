@@ -143,6 +143,15 @@ add_executable(logger_shutdown_tests
     tests/logger_shutdown.cpp
 )
 
+add_executable(buffer_recovery_tests tests/buffer_recovery_tests.cpp)
+
+target_include_directories(buffer_recovery_tests PRIVATE src)
+
+target_link_options(buffer_recovery_tests PRIVATE
+    -static-libgcc
+    -static-libstdc++
+)
+
 target_include_directories(logger_shutdown_tests PRIVATE src)
 
 target_compile_definitions(logger_shutdown_tests PRIVATE
@@ -192,6 +201,11 @@ set_target_properties(stall_detector_tests PROPERTIES
 
 set_target_properties(logger_shutdown_tests PROPERTIES
     OUTPUT_NAME "logger_shutdown_tests"
+    SUFFIX ".exe"
+)
+
+set_target_properties(buffer_recovery_tests PROPERTIES
+    OUTPUT_NAME "buffer_recovery_tests"
     SUFFIX ".exe"
 )
 

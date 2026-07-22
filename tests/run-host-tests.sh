@@ -13,3 +13,10 @@ mkdir -p "${build_dir}"
   -o "${build_dir}/stall_detector_tests"
 
 "${build_dir}/stall_detector_tests"
+
+"${cxx}" -std=c++20 -Wall -Wextra -Werror -pthread \
+  -I"${root_dir}/src" \
+  "${root_dir}/tests/buffer_recovery_tests.cpp" \
+  -o "${build_dir}/buffer_recovery_tests"
+
+"${build_dir}/buffer_recovery_tests"
