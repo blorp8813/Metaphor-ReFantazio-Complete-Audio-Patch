@@ -1,4 +1,4 @@
-# Security policy
+# Metaphor: ReFantazio Complete Audio Patch — Security Policy
 
 This plugin runs inside the game process and loads through a DLL proxy, so installation sources and binary integrity matter.
 

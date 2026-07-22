@@ -1,4 +1,4 @@
-name: Build and test
+name: Complete Audio Patch build and test
 
 on:
   pull_request:

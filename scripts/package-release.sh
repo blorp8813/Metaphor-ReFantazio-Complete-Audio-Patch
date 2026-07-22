@@ -13,7 +13,7 @@ fi
 
 "${root_dir}/scripts/verify-release-config.sh"
 
-release_name="MetaphorAudioFix-${version}-win64"
+release_name="Metaphor-ReFantazio-Complete-Audio-Patch-${version}-win64"
 staging_dir="${dist_dir}/${release_name}"
 zip_path="${dist_dir}/${release_name}.zip"
 sha_path="${zip_path}.sha256"
