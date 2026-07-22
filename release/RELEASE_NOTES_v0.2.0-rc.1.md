@@ -28,21 +28,20 @@ Testing is still limited. These results do not prove that every possible source 
 ## Installation
 
 1. Close the game and Steam inside CrossOver or Wine.
-2. Back up existing `MetaphorAudioFix.asi`, `MetaphorAudioFix.ini`, `winmm.dll`, and `libwinpthread-1.dll` files.
-3. Extract the release ZIP beside `METAPHOR.exe`.
-4. Set the game's Steam launch option to:
+2. Extract the release ZIP beside `METAPHOR.exe`.
+3. Set the game's Steam launch option to:
 
    ```text
    WINEDLLOVERRIDES="winmm=n,b" %command%
    ```
 
-5. Restart Steam and launch the game.
+4. Restart Steam and launch the game.
 
-Existing MetaphorAudioFix users can replace the ASI and merge the new `[Recovery]` settings into a customized INI. Do not overwrite a `winmm.dll` shared by another mod without checking it first.
+Do not overwrite a `winmm.dll` shared by another mod without checking it first.
 
-## Rollback
+## Uninstall
 
-Close the game and Steam, then restore the complete original plugin backup. The patch does not modify saves, game data, Steam Cloud, or global CrossOver settings.
+Close the game and Steam, remove the patch files, and remove the Steam launch option if no other ASI mod uses it. Do not remove `winmm.dll` or `libwinpthread-1.dll` if another mod depends on them. The patch does not modify saves, game data, Steam Cloud, or global CrossOver settings.
 
 ## Reporting problems
 
@@ -60,6 +59,6 @@ Do not upload game binaries, saves, credentials, personal paths, or unrelated Cr
 ## Checksums
 
 - `MetaphorAudioFix.asi`: `5befdfca7c78087edd378d2d21ffbd3321ec5a225de565197d6017f3db9c1a74`
-- `Metaphor-ReFantazio-Complete-Audio-Patch-v0.2.0-rc.1-win64.zip`: `13c00b8c45eec7e2e070f59e9988cf48948a6e5474c715f59662a882a265ca08`
+- `Metaphor-ReFantazio-Complete-Audio-Patch-v0.2.0-rc.1-win64.zip`: `00c7a2d4e479a1cd6d9c6f3ed764d91b8e9f81c457ce7f54e8dff8b517fccafe`
 
 This unofficial community project is not affiliated with or endorsed by ATLUS, SEGA, CodeWeavers, Valve, Microsoft, or Apple.

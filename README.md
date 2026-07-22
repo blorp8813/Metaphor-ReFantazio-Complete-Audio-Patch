@@ -23,48 +23,30 @@ Other Wine, CrossOver, Proton, Windows, Mac, and audio-device combinations may w
 
 Download the newest ZIP from this repository's **Releases** page. Verify it using the included `.sha256` checksum file before installing.
 
-The internal plugin filenames remain `MetaphorAudioFix.*` for compatibility with existing installations.
+The internal plugin filenames remain `MetaphorAudioFix.*` because those are the filenames used by the plugin.
 
 ## Installation
-
-### New installation
 
 1. Fully close the game and Steam inside CrossOver or Wine.
 2. In Steam, right-click `Metaphor: ReFantazio` and open **Properties → Installed Files → Browse**.
 3. Find `METAPHOR.exe` in the game folder.
-4. Back up any existing files with these names:
+4. Extract the release ZIP.
+5. Copy these four files beside `METAPHOR.exe`:
 
    - `MetaphorAudioFix.asi`
    - `MetaphorAudioFix.ini`
    - `winmm.dll`
    - `libwinpthread-1.dll`
 
-5. Extract the release ZIP.
-6. Copy these four files beside `METAPHOR.exe`:
-
-   - `MetaphorAudioFix.asi`
-   - `MetaphorAudioFix.ini`
-   - `winmm.dll`
-   - `libwinpthread-1.dll`
-
-7. In the game's Steam **Launch Options**, enter:
+6. In the game's Steam **Launch Options**, enter:
 
    ```text
    WINEDLLOVERRIDES="winmm=n,b" %command%
    ```
 
-8. Restart Steam inside CrossOver or Wine, then launch the game normally.
+7. Restart Steam inside CrossOver or Wine, then launch the game normally.
 
 If another mod already installed `winmm.dll`, do not overwrite it blindly. It may be a shared ASI loader required by that mod.
-
-### Updating from the original MetaphorAudioFix
-
-1. Close the game and Steam.
-2. Back up the four existing plugin files listed above.
-3. Replace `MetaphorAudioFix.asi` with the new version.
-4. Replace `MetaphorAudioFix.ini` unless you previously customized it. If customized, keep your settings and add the `[Recovery]` section from the new INI.
-5. You normally do not need to replace `winmm.dll` or `libwinpthread-1.dll` when their checksums already match the release versions.
-6. Restart Steam and launch the game.
 
 ## Normal settings
 
@@ -109,12 +91,13 @@ When reporting a problem, include your macOS version, Mac model and chip, CrossO
 
 **Never upload the game executable, game files, saves, account details, personal paths, or unrelated CrossOver bottle contents.**
 
-## Uninstall or roll back
+## Uninstall
 
 1. Close the game and Steam.
-2. Restore the four original files from your backup.
-3. If this was a new installation, remove only the files you added. Do not remove `winmm.dll` if another mod depends on it.
-4. Remove the Steam launch option only if no other ASI mod needs the `winmm` override.
+2. Remove `MetaphorAudioFix.asi` and `MetaphorAudioFix.ini` from the game folder.
+3. Remove `libwinpthread-1.dll` if no other plugin uses it.
+4. Remove `winmm.dll` only if no other mod depends on it.
+5. Remove the Steam launch option only if no other ASI mod needs the `winmm` override.
 
 The patch does not modify saves, Steam Cloud data, game data, or global CrossOver settings.
 
