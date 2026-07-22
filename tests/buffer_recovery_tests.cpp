@@ -47,6 +47,9 @@ struct MockBackend {
     std::function<void()> on_stop;
     std::size_t get_index = 0;
     std::size_t padding_index = 0;
+    std::uint32_t stop_calls = 0;
+    std::uint32_t reset_calls = 0;
+    std::uint32_t start_calls = 0;
     std::uint64_t now = 1000;
     float buffer[4096]{};
 
@@ -72,6 +75,7 @@ struct MockBackend {
 
     Hr Stop()
     {
+        ++stop_calls;
         if (on_stop) {
             on_stop();
         }
@@ -83,6 +87,7 @@ struct MockBackend {
 
     Hr Reset()
     {
+        ++reset_calls;
         reset_observed_started = started;
         if (BufferRecovery::Succeeded(reset_result)) {
             started = false;
@@ -92,6 +97,7 @@ struct MockBackend {
 
     Hr Start()
     {
+        ++start_calls;
         start_observed_started = started;
         if (BufferRecovery::Succeeded(start_result)) {
             started = true;
@@ -129,6 +135,47 @@ int main()
         Expect(BufferRecovery::Succeeded(outcome.hr), "full-period GetBuffer succeeds");
         Expect(outcome.frames == 480, "full-period frame count propagates");
         Expect(backend.get_requests == std::vector<std::uint32_t>{480}, "normal path makes one request");
+    }
+
+    {
+        Config config = RecoveryConfig();
+        config.reset_restart_fallback = false;
+        Coordinator coordinator(config);
+        MockBackend backend{{BufferRecovery::kBufferTooLarge, BufferRecovery::kOk, BufferRecovery::kOk}, {992}};
+        const AcquireOutcome short_outcome = coordinator.Acquire(backend, 480, 1440, false);
+        Expect(short_outcome.adaptive_succeeded && short_outcome.frames == 448,
+               "1440/480 stream with padding 992 retries exactly 448 frames");
+        for (std::uint32_t frame = 0; frame < short_outcome.frames; ++frame) {
+            backend.buffer[frame * 2] = 1.0f;
+            backend.buffer[frame * 2 + 1] = 1.0f;
+        }
+        backend.ReleaseBuffer(short_outcome.frames);
+        Expect(backend.release_requests == std::vector<std::uint32_t>{448},
+               "regression path releases exactly the acquired 448 frames");
+
+        const AcquireOutcome next_outcome = coordinator.Acquire(backend, 480, 1440, false);
+        Expect(BufferRecovery::Succeeded(next_outcome.hr) && next_outcome.frames == 480,
+               "next processing pass returns to the full 480-frame period");
+        Expect(backend.get_requests == std::vector<std::uint32_t>({480, 448, 480}),
+               "regression request sequence is 480, 448, then 480");
+        Expect(backend.stop_calls == 0 && backend.reset_calls == 0 && backend.start_calls == 0,
+               "adaptive-only regression never calls Stop, Reset, or Start");
+        Expect(backend.started, "adaptive-only regression preserves the started state");
+    }
+
+    {
+        Config config = RecoveryConfig();
+        config.reset_restart_fallback = false;
+        Coordinator coordinator(config);
+        MockBackend backend{{BufferRecovery::kBufferTooLarge, BufferRecovery::kOk}, {480}};
+        const AcquireOutcome outcome = coordinator.Acquire(backend, 480, 1440, false);
+        Expect(outcome.adaptive_succeeded && outcome.frames == 480,
+               "same-size adaptive retry can recover when one full period is available");
+        Expect(backend.get_requests == std::vector<std::uint32_t>({480, 480}),
+               "same-size retry repeats the full period exactly once");
+        Expect(backend.stop_calls == 0 && backend.reset_calls == 0 && backend.start_calls == 0,
+               "same-size adaptive retry never calls Stop, Reset, or Start");
+        Expect(backend.started, "same-size adaptive retry preserves the started state");
     }
 
     {

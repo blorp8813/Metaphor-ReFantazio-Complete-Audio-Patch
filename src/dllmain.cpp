@@ -1382,17 +1382,19 @@ HRESULT STDMETHODCALLTYPE SpatialRenderStream::BeginUpdatingAudioObjects(UINT32*
 
 void SpatialRenderStream::LogBufferRecoveryOutcome(const BufferRecovery::AcquireOutcome& outcome)
 {
+#if METAPHOR_AUDIO_FIX_ENABLE_FAULT_INJECTION
     if (outcome.fault_injected) {
         Log::Warn("FAULT_INJECTION_BUFFER_TOO_LARGE stream=%p successful_cycles=%llu threshold=%d",
                   this,
                   static_cast<unsigned long long>(successful_get_buffer_cycles_.load(std::memory_order_relaxed)),
                   g_config.recovery_fault_inject_buffer_too_large_after);
     }
+#endif
     if (!outcome.buffer_too_large_caught) {
         return;
     }
 
-    Log::Warn("BUFFER_TOO_LARGE_CAUGHT stream=%p original_request=%u capacity=%u padding_hr=0x%08lX padding=%u available=%u retry=%u retry_hr=0x%08lX",
+    Log::RecoveryWarn("BUFFER_TOO_LARGE_CAUGHT stream=%p original_request=%u capacity=%u padding_hr=0x%08lX padding=%u available=%u retry=%u retry_hr=0x%08lX",
               this,
               outcome.original_request_frames,
               outcome.buffer_capacity_frames,
@@ -1403,7 +1405,7 @@ void SpatialRenderStream::LogBufferRecoveryOutcome(const BufferRecovery::Acquire
               static_cast<unsigned long>(outcome.adaptive_hr));
 
     if (outcome.adaptive_succeeded) {
-        Log::Warn("ADAPTIVE_BUFFER_RETRY_SUCCEEDED stream=%p original_request=%u capacity=%u padding=%u available=%u retry=%u result=0x%08lX",
+        Log::RecoveryWarn("ADAPTIVE_BUFFER_RETRY_SUCCEEDED stream=%p original_request=%u capacity=%u padding=%u available=%u retry=%u result=0x%08lX",
                   this,
                   outcome.original_request_frames,
                   outcome.buffer_capacity_frames,
@@ -1412,7 +1414,7 @@ void SpatialRenderStream::LogBufferRecoveryOutcome(const BufferRecovery::Acquire
                   outcome.adaptive_retry_frames,
                   static_cast<unsigned long>(outcome.adaptive_hr));
     } else if (g_config.recovery_adaptive_buffer_retry) {
-        Log::Error("ADAPTIVE_BUFFER_RETRY_FAILED stream=%p attempted=%d original_request=%u capacity=%u padding_hr=0x%08lX padding=%u available=%u retry=%u result=0x%08lX",
+        Log::RecoveryError("ADAPTIVE_BUFFER_RETRY_FAILED stream=%p attempted=%d original_request=%u capacity=%u padding_hr=0x%08lX padding=%u available=%u retry=%u result=0x%08lX",
                    this,
                    outcome.adaptive_attempted,
                    outcome.original_request_frames,
@@ -1425,7 +1427,7 @@ void SpatialRenderStream::LogBufferRecoveryOutcome(const BufferRecovery::Acquire
     }
 
     if (outcome.circuit_breaker_open) {
-        Log::Error("RECOVERY_CIRCUIT_BREAKER_OPEN stream=%p maximum_per_window=%d window_ms=%d cooldown_ms=%d",
+        Log::RecoveryError("RECOVERY_CIRCUIT_BREAKER_OPEN stream=%p maximum_per_window=%d window_ms=%d cooldown_ms=%d",
                    this,
                    g_config.recovery_maximum_recoveries_per_window,
                    g_config.recovery_window_ms,
@@ -1531,7 +1533,7 @@ HRESULT STDMETHODCALLTYPE SpatialRenderStream::EndUpdatingAudioObjects()
 
 void SpatialRenderStream::StartWatchdog()
 {
-    if (!Log::Enabled() || watchdog_thread_) {
+    if (!g_config.diagnostics_enabled || watchdog_thread_) {
         return;
     }
     watchdog_stop_event_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
@@ -2398,8 +2400,9 @@ void RegisterEndpointNotificationsFromReturnedInterface(void* returned_interface
     }
 
     HookIMMDeviceEnumerator(enumerator);
-    if (!Log::Enabled() || !g_self_reference || g_teardown_requested.load(std::memory_order_acquire)) {
-        if (Log::Enabled() && !g_self_reference) {
+    if (!g_config.diagnostics_enabled || !g_self_reference ||
+        g_teardown_requested.load(std::memory_order_acquire)) {
+        if (g_config.diagnostics_enabled && !g_self_reference) {
             Log::Error("Endpoint notification registration refused because DLL self-reference is unavailable");
         }
         enumerator->Release();
@@ -2567,7 +2570,7 @@ DWORD WINAPI MainThread(void*)
     QueryPerformanceFrequency(&g_qpc_frequency);
     std::filesystem::path log_path = g_config.diagnostics_log_path;
     if (log_path.empty()) {
-        log_path = L"MetaphorAudioFix-diagnostic.log";
+        log_path = L"MetaphorAudioFix.log";
     }
     if (log_path.is_relative()) {
         log_path = g_module_dir / log_path;
@@ -2575,6 +2578,7 @@ DWORD WINAPI MainThread(void*)
     Log::Init(
         log_path,
         g_config.diagnostics_enabled,
+        g_config.recovery_logging,
         static_cast<std::uint64_t>(g_config.diagnostics_max_log_size_mb) * 1024ULL * 1024ULL,
         g_config.diagnostics_max_log_files
     );
@@ -2619,6 +2623,16 @@ DWORD WINAPI MainThread(void*)
               g_config.recovery_window_ms,
               g_config.recovery_cooldown_ms,
               g_config.recovery_fault_inject_buffer_too_large_after);
+    Log::RecoveryWarn("RECOVERY_CONFIGURATION enabled=%d adaptive_buffer_retry=%d reset_restart_fallback=%d recreate_client_fallback=%d maximum_attempts_per_failure=%d maximum_recoveries_per_window=%d recovery_window_ms=%d recovery_cooldown_ms=%d fault_injection_compiled=%d",
+                      g_config.recovery_enabled,
+                      g_config.recovery_adaptive_buffer_retry,
+                      g_config.recovery_reset_restart_fallback,
+                      g_config.recovery_recreate_client_fallback,
+                      g_config.recovery_maximum_attempts_per_failure,
+                      g_config.recovery_maximum_recoveries_per_window,
+                      g_config.recovery_window_ms,
+                      g_config.recovery_cooldown_ms,
+                      METAPHOR_AUDIO_FIX_ENABLE_FAULT_INJECTION);
     if (g_config.recovery_recreate_client_fallback) {
         Log::Warn("RecreateClientFallback requested but not implemented; option ignored");
     }

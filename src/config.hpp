@@ -26,7 +26,8 @@ struct Config {
     bool diagnostics_detailed_buffer_logging = false;
     int diagnostics_buffer_log_sample_rate = 100;
     int diagnostics_error_reminder_ms = 30000;
-    bool recovery_enabled = false;
+    bool recovery_enabled = true;
+    bool recovery_logging = true;
     bool recovery_adaptive_buffer_retry = true;
     bool recovery_reset_restart_fallback = false;
     bool recovery_recreate_client_fallback = false;
