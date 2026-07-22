@@ -639,8 +639,9 @@ class AudioClientRecoveryBackend {
 public:
     AudioClientRecoveryBackend(IAudioClient* audio_client,
                                IAudioRenderClient* render_client,
-                               std::atomic<bool>& started)
-        : audio_client_(audio_client), render_client_(render_client), started_(started)
+                               std::atomic<bool>& started,
+                               void* stream)
+        : audio_client_(audio_client), render_client_(render_client), started_(started), stream_(stream)
     {
     }
 
@@ -685,10 +686,49 @@ public:
     std::uint64_t NowTicks() const { return QpcNow(); }
     bool IsStarted() const { return started_.load(std::memory_order_acquire); }
 
+    void StageBefore(BufferRecovery::Stage stage)
+    {
+        if (stage == BufferRecovery::Stage::Stop) {
+            Log::Warn("BUFFER_RECOVERY_STARTED stream=%p started=%d",
+                      stream_, started_.load(std::memory_order_acquire));
+        }
+        Log::Warn("BUFFER_RECOVERY_STAGE_BEFORE stream=%p stage=%s started=%d",
+                  stream_, StageName(stage), started_.load(std::memory_order_acquire));
+    }
+
+    void StageAfter(BufferRecovery::Stage stage, BufferRecovery::Hr result)
+    {
+        const bool started = started_.load(std::memory_order_acquire);
+        Log::Warn("BUFFER_RECOVERY_STAGE_AFTER stream=%p stage=%s result=0x%08lX started=%d",
+                  stream_, StageName(stage), static_cast<unsigned long>(result), started);
+        if (stage == BufferRecovery::Stage::Reset && BufferRecovery::Succeeded(result)) {
+            Log::Warn("BUFFER_RECOVERY_RESET_SUCCEEDED stream=%p reset_hr=0x%08lX started_after_reset=%d",
+                      stream_, static_cast<unsigned long>(result), started);
+        }
+    }
+
 private:
+    static const char* StageName(BufferRecovery::Stage stage)
+    {
+        switch (stage) {
+        case BufferRecovery::Stage::Stop:
+            return "Stop";
+        case BufferRecovery::Stage::Reset:
+            return "Reset";
+        case BufferRecovery::Stage::Start:
+            return "Start";
+        case BufferRecovery::Stage::GetCurrentPadding:
+            return "GetCurrentPadding";
+        case BufferRecovery::Stage::GetBuffer:
+            return "GetBuffer";
+        }
+        return "Unknown";
+    }
+
     IAudioClient* audio_client_ = nullptr;
     IAudioRenderClient* render_client_ = nullptr;
     std::atomic<bool>& started_;
+    void* stream_ = nullptr;
 };
 
 class SpatialRenderObject final : public ISpatialAudioObject {
@@ -1269,7 +1309,7 @@ HRESULT STDMETHODCALLTYPE SpatialRenderStream::BeginUpdatingAudioObjects(UINT32*
         return AUDCLNT_E_BUFFER_OPERATION_PENDING;
     }
 
-    AudioClientRecoveryBackend backend(audio_client_, render_client_, started_);
+    AudioClientRecoveryBackend backend(audio_client_, render_client_, started_, this);
     const bool inject_buffer_too_large = recovery_.ShouldInject(
         successful_get_buffer_cycles_.load(std::memory_order_acquire));
     recovery_in_progress_ = true;
@@ -1400,17 +1440,6 @@ void SpatialRenderStream::LogBufferRecoveryOutcome(const BufferRecovery::Acquire
         ? static_cast<double>(outcome.recovery_elapsed_ticks) * 1000.0 /
               static_cast<double>(g_qpc_frequency.QuadPart)
         : 0.0;
-    Log::Warn("BUFFER_RECOVERY_STARTED stream=%p stop_hr=0x%08lX reset_hr=0x%08lX start_hr=0x%08lX",
-              this,
-              static_cast<unsigned long>(outcome.stop_hr),
-              static_cast<unsigned long>(outcome.reset_hr),
-              static_cast<unsigned long>(outcome.start_hr));
-    if (outcome.reset_succeeded) {
-        Log::Warn("BUFFER_RECOVERY_RESET_SUCCEEDED stream=%p reset_hr=0x%08lX started_after_reset=%d",
-                  this,
-                  static_cast<unsigned long>(outcome.reset_hr),
-                  outcome.started_after_reset);
-    }
     if (outcome.recovery_succeeded) {
         Log::Warn("BUFFER_RECOVERY_SUCCEEDED stream=%p stop_hr=0x%08lX reset_hr=0x%08lX start_hr=0x%08lX started_after_start=%d padding_hr=0x%08lX padding=%u available=%u retry=%u retry_hr=0x%08lX elapsed_ms=%.3f",
                   this,

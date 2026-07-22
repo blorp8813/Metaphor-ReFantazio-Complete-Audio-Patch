@@ -14,6 +14,14 @@ constexpr Hr kOk = 0;
 constexpr Hr kBufferTooLarge = static_cast<Hr>(0x88890006u);
 constexpr Hr kNotAttempted = static_cast<Hr>(0x80004001u);
 
+enum class Stage : std::uint8_t {
+    Stop,
+    Reset,
+    Start,
+    GetCurrentPadding,
+    GetBuffer,
+};
+
 constexpr bool Succeeded(Hr hr)
 {
     return hr >= 0;
@@ -22,7 +30,7 @@ constexpr bool Succeeded(Hr hr)
 struct Config {
     bool enabled = false;
     bool adaptive_retry = true;
-    bool reset_restart_fallback = true;
+    bool reset_restart_fallback = false;
     std::uint32_t maximum_attempts_per_failure = 1;
     std::uint32_t maximum_recoveries_per_window = 3;
     std::uint64_t recovery_window_ticks = 0;
@@ -177,7 +185,9 @@ public:
 
         recovery_timestamps_[recovery_timestamp_count_++] = recovery_start;
         outcome.recovery_started = true;
+        backend.StageBefore(Stage::Stop);
         outcome.stop_hr = backend.Stop();
+        backend.StageAfter(Stage::Stop, outcome.stop_hr);
         if (!Succeeded(outcome.stop_hr)) {
             outcome.recovery_failed = true;
             outcome.hr = outcome.initial_hr;
@@ -185,7 +195,9 @@ public:
             return outcome;
         }
 
+        backend.StageBefore(Stage::Reset);
         outcome.reset_hr = backend.Reset();
+        backend.StageAfter(Stage::Reset, outcome.reset_hr);
         if (!Succeeded(outcome.reset_hr)) {
             outcome.recovery_failed = true;
             outcome.hr = outcome.initial_hr;
@@ -195,7 +207,9 @@ public:
         outcome.reset_succeeded = true;
         outcome.started_after_reset = backend.IsStarted();
 
+        backend.StageBefore(Stage::Start);
         outcome.start_hr = backend.Start();
+        backend.StageAfter(Stage::Start, outcome.start_hr);
         outcome.started_after_start = backend.IsStarted();
         if (!Succeeded(outcome.start_hr)) {
             outcome.recovery_failed = true;
@@ -204,7 +218,9 @@ public:
             return outcome;
         }
 
+        backend.StageBefore(Stage::GetCurrentPadding);
         outcome.recovery_padding_hr = backend.GetCurrentPadding(&outcome.recovery_padding_frames);
+        backend.StageAfter(Stage::GetCurrentPadding, outcome.recovery_padding_hr);
         const bool recovery_padding_consistent = Succeeded(outcome.recovery_padding_hr) &&
                                                  outcome.recovery_padding_frames <= buffer_capacity_frames;
         if (recovery_padding_consistent) {
@@ -218,7 +234,9 @@ public:
         }
 
         outcome.recovery_retry_frames = std::min(period_frames, outcome.recovery_available_frames);
+        backend.StageBefore(Stage::GetBuffer);
         outcome.recovery_retry_hr = backend.GetBuffer(outcome.recovery_retry_frames, &outcome.buffer);
+        backend.StageAfter(Stage::GetBuffer, outcome.recovery_retry_hr);
         ++outcome.get_buffer_calls;
         outcome.recovery_elapsed_ticks = backend.NowTicks() - recovery_start;
         outcome.hr = outcome.recovery_retry_hr;
