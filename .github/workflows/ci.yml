@@ -1,0 +1,39 @@
+name: Build and test
+
+on:
+  pull_request:
+  push:
+    branches:
+      - "**"
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64
+      - name: Run portable tests
+        run: ./tests/run-host-tests.sh
+      - name: Verify production configuration and licenses
+        run: ./scripts/verify-release-config.sh
+      - name: Configure warning build
+        run: |
+          cmake -S . -B build/warnings \
+            -DCMAKE_SYSTEM_NAME=Windows \
+            -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
+            -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
+            -DCMAKE_C_FLAGS='-Wall -Wextra -Wpedantic' \
+            -DCMAKE_CXX_FLAGS='-Wall -Wextra -Wpedantic'
+      - name: Build Windows x86-64 targets
+        run: cmake --build build/warnings --config Release
+      - name: Confirm public fault injection is disabled
+        run: grep -q '^METAPHOR_AUDIO_FIX_ENABLE_FAULT_INJECTION:BOOL=OFF$' build/warnings/CMakeCache.txt
