@@ -24,10 +24,13 @@ Verification date: 2026-07-22. Branch: `audio-buffer-recovery-release`.
 
 ## Environment
 
-- Apple Silicon macOS host
+- MacBook Air with Apple M5, 10-core CPU, 10-core GPU, and 24 GB unified memory
+- macOS 27.0 build `26A5378n`
 - Apple Clang 21.0.0 for portable tests
 - CMake 4.4.0
 - LLVM/Clang MinGW 22.1.3 targeting `x86_64-w64-windows-gnu`
-- CrossOver Preview 27.0.0.40646 (`cxpreview-20260702-rc1`) using the existing Steam bottle
+- CrossOver Preview 27.0.0.40646 (`cxpreview-20260702-rc1`) using Windows Steam
+- Built-in MacBook Air speakers and normal macOS audio output
+- Exact game build not recorded
 
 The final commit and artifact checksums are recorded in the external release manifest generated after the source commits. No game files, saves, game executables, personal diagnostic logs, or personal filesystem paths are included.
