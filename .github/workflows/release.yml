@@ -1,50 +1,51 @@
-name: Release
+name: Release candidate artifact
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: Release version, for example v1.0.0
+        description: Version such as v0.2.0-rc.1
         required: true
-        default: v0.1.0
+        default: v0.2.0-rc.1
   push:
     tags:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  build:
+  package:
     runs-on: ubuntu-latest
-
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
-
-      - name: Install dependencies
+        with:
+          fetch-depth: 0
+      - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 zip
-
-      - name: Resolve version
+      - name: Resolve explicit version
         id: version
         shell: bash
         run: |
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             version="${GITHUB_REF_NAME}"
           else
-            version="${{ github.event.inputs.version }}"
+            version="${{ inputs.version }}"
           fi
+          [[ "${version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
           echo "value=${version}" >> "${GITHUB_OUTPUT}"
-
-      - name: Build Windows package
+      - name: Run portable tests
+        run: ./tests/run-host-tests.sh
+      - name: Verify production configuration and licenses
+        run: ./scripts/verify-release-config.sh
+      - name: Build Windows x86-64 package
         run: ./build-windows.sh
-
-      - name: Package release zip
+      - name: Package deterministic release artifact
         run: ./scripts/package-release.sh "${{ steps.version.outputs.value }}"
-
-      - name: Upload workflow artifact
+      - name: Upload release candidate artifact
         uses: actions/upload-artifact@v4
         with:
           name: MetaphorAudioFix-${{ steps.version.outputs.value }}-win64
@@ -52,12 +53,4 @@ jobs:
             dist/MetaphorAudioFix-${{ steps.version.outputs.value }}-win64.zip
             dist/MetaphorAudioFix-${{ steps.version.outputs.value }}-win64.zip.sha256
           if-no-files-found: error
-
-      - name: Publish GitHub release
-        if: github.ref_type == 'tag'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist/MetaphorAudioFix-${{ steps.version.outputs.value }}-win64.zip
-            dist/MetaphorAudioFix-${{ steps.version.outputs.value }}-win64.zip.sha256
-
+          retention-days: 30
