@@ -1109,10 +1109,12 @@ HRESULT STDMETHODCALLTYPE SpatialRenderStream::Reset()
 {
     const HRESULT hr = audio_client_ ? audio_client_->Reset() : E_FAIL;
     if (SUCCEEDED(hr)) {
+        started_.store(false, std::memory_order_release);
         last_non_silent_qpc_ = 0;
         last_callback_qpc_ = 0;
     }
-    Log::Info("IAudioClient::Reset stream=%p result=0x%08lX", this, static_cast<unsigned long>(hr));
+    Log::Info("IAudioClient::Reset stream=%p result=0x%08lX started=%d",
+              this, static_cast<unsigned long>(hr), started_.load(std::memory_order_acquire));
     if (FAILED(hr)) {
         Log::Error("IAudioClient::Reset failed stream=%p result=0x%08lX", this, static_cast<unsigned long>(hr));
     }
@@ -1279,9 +1281,11 @@ void SpatialRenderStream::StopWatchdog()
 DWORD WINAPI SpatialRenderStream::WatchdogThread(void* context)
 {
     auto* stream = static_cast<SpatialRenderStream*>(context);
-    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    const HRESULT coinit_hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     stream->WatchdogLoop();
-    CoUninitialize();
+    if (SUCCEEDED(coinit_hr)) {
+        CoUninitialize();
+    }
     return 0;
 }
 
