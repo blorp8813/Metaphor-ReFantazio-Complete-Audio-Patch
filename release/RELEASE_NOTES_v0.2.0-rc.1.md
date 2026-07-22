@@ -29,19 +29,16 @@ Testing is still limited. These results do not prove that every possible source 
 
 1. Close the game and Steam inside CrossOver or Wine.
 2. Extract the release ZIP beside `METAPHOR.exe`.
-3. Set the game's Steam launch option to:
-
-   ```text
-   WINEDLLOVERRIDES="winmm=n,b" %command%
-   ```
-
-4. Restart Steam and launch the game.
+3. In CrossOver, select the bottle containing Steam and open **Wine Configuration**.
+4. On the **Libraries** tab, add a `winmm` override.
+5. Edit `winmm` and set it to **Native, then Builtin**.
+6. Apply the change, fully restart Steam inside the bottle, and launch the game.
 
 Do not overwrite a `winmm.dll` shared by another mod without checking it first.
 
 ## Uninstall
 
-Close the game and Steam, remove the patch files, and remove the Steam launch option if no other ASI mod uses it. Do not remove `winmm.dll` or `libwinpthread-1.dll` if another mod depends on them. The patch does not modify saves, game data, Steam Cloud, or global CrossOver settings.
+Close the game and Steam and remove the patch files. Remove the `winmm` Wine Configuration library override only if no other ASI mod uses it. Do not remove `winmm.dll` or `libwinpthread-1.dll` if another mod depends on them. The patch does not modify saves, game data, Steam Cloud, or unrelated CrossOver bottles.
 
 ## Reporting problems
 
@@ -59,6 +56,6 @@ Do not upload game binaries, saves, credentials, personal paths, or unrelated Cr
 ## Checksums
 
 - `MetaphorAudioFix.asi`: `5befdfca7c78087edd378d2d21ffbd3321ec5a225de565197d6017f3db9c1a74`
-- `Metaphor-ReFantazio-Complete-Audio-Patch-v0.2.0-rc.1-win64.zip`: `00c7a2d4e479a1cd6d9c6f3ed764d91b8e9f81c457ce7f54e8dff8b517fccafe`
+- `Metaphor-ReFantazio-Complete-Audio-Patch-v0.2.0-rc.1-win64.zip`: `f3e004381dd0acfbd3b7cc94e667d40e5334e3c3c4d5d102f81858a92d14c6f6`
 
 This unofficial community project is not affiliated with or endorsed by ATLUS, SEGA, CodeWeavers, Valve, Microsoft, or Apple.
