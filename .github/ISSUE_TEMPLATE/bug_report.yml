@@ -1,0 +1,53 @@
+name: Bug report
+description: Report a reproducible audio or compatibility problem
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not attach game binaries, saves, credentials, or unredacted personal paths. Review diagnostic logs before sharing.
+  - type: input
+    id: version
+    attributes:
+      label: Plugin version and ASI SHA-256
+      placeholder: v0.2.0-rc.1 / checksum
+    validations:
+      required: true
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: Runtime
+      options: [CrossOver, Wine, Proton, Windows, Other]
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, CPU architecture, runtime version, game version, and audio output. Redact personal paths.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant redacted configuration and recovery events
+      render: text
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Privacy confirmation
+      options:
+        - label: I removed game files, saves, credentials, and personally identifying paths.
+          required: true
