@@ -1,18 +1,18 @@
-# Changelog
+# Metaphor: ReFantazio Complete Audio Patch — Changelog
 
-All notable changes to this fork are documented here.
+All notable changes to this project are documented here.
 
 ## [0.2.0-rc.1] - 2026-07-22
 
 ### Added
 
-- Bounded adaptive `GetBuffer` retry for `AUDCLNT_E_BUFFER_TOO_LARGE` using current padding and stream capacity.
+- Fix for random loss of all game audio during gameplay. When Wine temporarily cannot accept the game's full audio packet, the patch safely retries with the available space instead of allowing the game to stop its audio stream.
 - Observation-only stall detection, audio-client telemetry, endpoint notifications, rate-limited error reporting, and asynchronous bounded log rotation.
 - Separate lightweight recovery logging that remains useful with full diagnostics disabled.
 - Portable recovery and stall-detector tests plus a Windows logger-shutdown harness.
 - Public build, contribution, security, architecture, configuration, and release documentation.
 
-### Safety defaults
+### Safety defaults and technical details
 
 - Recovery and adaptive retry enabled.
 - Reset/restart and client-recreation fallbacks disabled.

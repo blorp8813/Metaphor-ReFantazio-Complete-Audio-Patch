@@ -1,53 +1,76 @@
-# MetaphorAudioFix
+# Metaphor: ReFantazio Complete Audio Patch
 
-An unofficial Windows x86-64 ASI plugin for `Metaphor: ReFantazio` under Wine and CrossOver. It preserves the game's spatial-audio API while mixing its multichannel static-object bed to stereo, addressing faint or hollow dialogue. This fork also adds a bounded adaptive retry for an observed `AUDCLNT_E_BUFFER_TOO_LARGE` render failure that can otherwise be followed by total audio loss.
+An unofficial audio patch for `Metaphor: ReFantazio` running through CrossOver or Wine.
 
-This project is not affiliated with, endorsed by, or supported by ATLUS, SEGA, Valve, CodeWeavers, Microsoft, or Apple. Back up existing plugin files before installation. Use at your own risk.
+It fixes two separate problems:
 
-## Release status
+- **Quiet, hollow, or badly mixed dialogue.** The game sends multichannel spatial audio to a stereo output incorrectly. The patch mixes those channels down to stereo so voices sound clear and properly balanced.
+- **Random loss of all game audio during gameplay.** The game can occasionally request a larger audio packet than Wine can accept at that moment. The patch retries with the amount of space actually available, preventing the game from stopping its audio stream.
 
-`v0.2.0-rc.1` is a prerelease candidate. The adaptive retry was validated with `Metaphor: ReFantazio`, CrossOver Preview on Apple Silicon macOS, and Windows Steam. Exact public compatibility details remain intentionally unfilled until confirmed for release:
+The original dialogue and multichannel fix was created by Rajan Singh in the open-source [`MetaphorMacosAudioFix`](https://github.com/woahitsraj/MetaphorMacosAudioFix) project. This independent project is based on that code and adds the random audio-cutout fix, diagnostics, testing, and release packaging.
 
-- macOS version: **[TO BE SUPPLIED]**
-- Mac model and chip: **[TO BE SUPPLIED]**
-- CrossOver version used for game validation: **[TO BE SUPPLIED]**
-- game version/build: **[TO BE SUPPLIED]**
+## Compatibility
 
-Broader Wine, CrossOver, Proton, Windows, hardware, and game-version compatibility is not yet established.
+Currently tested with:
 
-The production configuration enables only the narrow adaptive retry. It does **not** automatically call `IAudioClient::Stop`, `Reset`, or `Start`, and it does not recreate the audio client. Experimental fallback code remains disabled.
+- `Metaphor: ReFantazio` through Windows Steam
+- CrossOver Preview on Apple Silicon macOS
+- Built-in Mac speakers and normal macOS audio output
 
-## Install
+Other Wine, CrossOver, Proton, Windows, Mac, and audio-device combinations may work but have not all been tested. `v0.2.0-rc.1` is a prerelease candidate, not a final universal fix.
 
-The release ZIP contains redistributable runtime files and their notices.
+## Download
 
-1. In Steam, open the game's `Properties` → `Installed Files` → `Browse`.
-2. Back up any existing `MetaphorAudioFix.asi`, `MetaphorAudioFix.ini`, `winmm.dll`, and `libwinpthread-1.dll` outside the game directory.
-3. New users should copy `MetaphorAudioFix.asi`, `MetaphorAudioFix.ini`, `winmm.dll`, and `libwinpthread-1.dll` beside `METAPHOR.exe`.
-4. Existing MetaphorAudioFix users should replace the ASI with the release version and merge the new `[Recovery]` section into their reviewed INI. Replace `winmm.dll` or `libwinpthread-1.dll` only if their installed checksums differ from the release manifest and no other mod owns those files.
-5. Configure Wine to load `winmm` as `native,builtin`. For a Steam launch option:
+Download the newest ZIP from this repository's **Releases** page. Verify it using the included `.sha256` checksum file before installing.
+
+The internal plugin filenames remain `MetaphorAudioFix.*` for compatibility with existing installations.
+
+## Installation
+
+### New installation
+
+1. Fully close the game and Steam inside CrossOver or Wine.
+2. In Steam, right-click `Metaphor: ReFantazio` and open **Properties → Installed Files → Browse**.
+3. Find `METAPHOR.exe` in the game folder.
+4. Back up any existing files with these names:
+
+   - `MetaphorAudioFix.asi`
+   - `MetaphorAudioFix.ini`
+   - `winmm.dll`
+   - `libwinpthread-1.dll`
+
+5. Extract the release ZIP.
+6. Copy these four files beside `METAPHOR.exe`:
+
+   - `MetaphorAudioFix.asi`
+   - `MetaphorAudioFix.ini`
+   - `winmm.dll`
+   - `libwinpthread-1.dll`
+
+7. In the game's Steam **Launch Options**, enter:
 
    ```text
    WINEDLLOVERRIDES="winmm=n,b" %command%
    ```
 
-6. Fully restart Steam inside the bottle or prefix, then launch the game normally.
+8. Restart Steam inside CrossOver or Wine, then launch the game normally.
 
-If another mod already supplies an ASI loader, do not blindly overwrite it. Confirm that the existing loader is compatible or use its documented installation method.
+If another mod already installed `winmm.dll`, do not overwrite it blindly. It may be a shared ASI loader required by that mod.
 
-## Upgrade
+### Updating from the original MetaphorAudioFix
 
-Exit the game and Steam, make a fresh timestamped backup, verify the new ZIP checksum, replace the ASI, and merge new INI keys without discarding unrelated settings. Keep reset/restart and recreation fallbacks disabled. A release upgrade should not require changes to saves, Steam Cloud, or global CrossOver settings.
+1. Close the game and Steam.
+2. Back up the four existing plugin files listed above.
+3. Replace `MetaphorAudioFix.asi` with the new version.
+4. Replace `MetaphorAudioFix.ini` unless you previously customized it. If customized, keep your settings and add the `[Recovery]` section from the new INI.
+5. You normally do not need to replace `winmm.dll` or `libwinpthread-1.dll` when their checksums already match the release versions.
+6. Restart Steam and launch the game.
 
-## Uninstall or roll back
+## Normal settings
 
-Exit the game and Steam. Restore the files from your backup, or remove only the files you added. Do not remove a shared `winmm.dll` or runtime DLL if another installed mod depends on it.
+The included INI is ready for normal use. Most users should not need to edit it.
 
-## Configuration
-
-The shipped [`MetaphorAudioFix.ini`](MetaphorAudioFix.ini) is the production configuration. A full telemetry example is provided at [`config/MetaphorAudioFix.diagnostic.ini`](config/MetaphorAudioFix.diagnostic.ini).
-
-Production recovery defaults:
+The random-cutout fix is enabled, while more invasive experimental recovery methods remain disabled:
 
 ```ini
 [Recovery]
@@ -56,66 +79,77 @@ RecoveryLogging = true
 AdaptiveBufferRetry = true
 ResetRestartFallback = false
 RecreateClientFallback = false
-MaximumAttemptsPerFailure = 1
-MaximumRecoveriesPerWindow = 3
-RecoveryWindowMs = 30000
-RecoveryCooldownMs = 1000
 FaultInjectBufferTooLargeAfter = 0
 ```
 
-`RecoveryLogging` records only configuration and recovery events in the bounded log while full diagnostics are off. Set both `RecoveryLogging = false` and `[Diagnostics] Enabled = false` to disable file logging. Logs rotate according to `MaxLogSizeMB` and `MaxLogFiles`.
+When the temporary audio-buffer problem occurs, the patch writes a small recovery record to `MetaphorAudioFix.log`. The log is size-limited and rotated automatically. Set `RecoveryLogging = false` to disable it.
 
-Important recovery events include:
+## Troubleshooting
 
-- `BUFFER_TOO_LARGE_CAUGHT`
-- `ADAPTIVE_BUFFER_RETRY_SUCCEEDED`
-- `ADAPTIVE_BUFFER_RETRY_FAILED`
-- `RECOVERY_CIRCUIT_BREAKER_OPEN`
+### The patch does not load
 
-Fault injection is compiled out of public builds. The production parser holds `FaultInjectBufferTooLargeAfter` at zero even if a different value is written to the INI.
+- Confirm all four files are beside the correct `METAPHOR.exe`.
+- Confirm the Steam launch option is exactly `WINEDLLOVERRIDES="winmm=n,b" %command%`.
+- Fully restart Steam inside the bottle after changing the files or launch option.
+- Check whether another mod supplies a conflicting `winmm.dll`.
 
-In plain language, the game normally requests a 480-frame packet. If Wine reports that the packet is temporarily too large—for example, only 448 frames fit—the plugin validates the stream capacity and padding, retries once with 448 frames, mixes and releases exactly those 448 frames, and returns to 480 frames on the next processing pass. It avoids letting that transient error propagate to the game's stream-stop behavior.
+### Dialogue is still quiet or hollow
 
-## Troubleshooting and bug reports
+- Confirm `[Spatial] WrapperEnabled = true` in `MetaphorAudioFix.ini`.
+- Confirm the ASI loader is actually loading the plugin.
+- Test with a normal stereo macOS output before adding Bluetooth, controller, or virtual audio devices.
 
-- Confirm all plugin files are beside the correct `METAPHOR.exe` and that the `winmm` override is `native,builtin`.
-- Confirm the active INI has adaptive recovery enabled and both fallbacks disabled.
-- Check `MetaphorAudioFix.log` for the recovery event names above. Enable the diagnostic sample only for a bounded reproduction session.
-- If startup or audio behavior regresses, roll back all files from the same backup set before testing individual differences.
+### All audio still cuts out
 
-Bug reports should include macOS version, Mac model and chip, CrossOver/Wine version, game version, output device, ASI SHA-256, relevant reviewed INI settings, reproduction steps, and a short relevant log excerpt. **Do not upload game binaries, saves, account details, personal paths, or unrelated CrossOver bottle files. Review and redact logs before sharing.**
+- Check `MetaphorAudioFix.log` for `BUFFER_TOO_LARGE_CAUGHT`, `ADAPTIVE_BUFFER_RETRY_SUCCEEDED`, or `ADAPTIVE_BUFFER_RETRY_FAILED`.
+- Enable the diagnostic sample in [`config/MetaphorAudioFix.diagnostic.ini`](config/MetaphorAudioFix.diagnostic.ini) for a short reproduction session.
+- Restore the normal production INI after testing because full diagnostics add overhead.
 
-## Build and test
+When reporting a problem, include your macOS version, Mac model and chip, CrossOver or Wine version, game version, output device, plugin checksum, and a short relevant log excerpt. Review the log first and remove personal paths or device information you do not want to share.
 
-On a clean macOS development environment, install CMake and an x86-64 MinGW cross-toolchain (for example `brew install cmake mingw-w64`), then run:
+**Never upload the game executable, game files, saves, account details, personal paths, or unrelated CrossOver bottle contents.**
+
+## Uninstall or roll back
+
+1. Close the game and Steam.
+2. Restore the four original files from your backup.
+3. If this was a new installation, remove only the files you added. Do not remove `winmm.dll` if another mod depends on it.
+4. Remove the Steam launch option only if no other ASI mod needs the `winmm` override.
+
+The patch does not modify saves, Steam Cloud data, game data, or global CrossOver settings.
+
+## Technical explanation
+
+The dialogue fix keeps the spatial-audio interface expected by the game, then mixes its multichannel static audio objects into a normal stereo render stream.
+
+The cutout fix handles a temporary `AUDCLNT_E_BUFFER_TOO_LARGE` response. For example, if the game asks for 480 audio frames but only 448 currently fit, the patch submits 448 safely instead of returning the error to the game. The next update returns to the normal 480-frame size. This recovery does not automatically stop, reset, restart, or recreate the audio stream.
+
+Developers can read:
+
+- [Architecture](docs/ARCHITECTURE.md)
+- [Recovery design](docs/RECOVERY_PROTOTYPE.md)
+- [Diagnostic logging](docs/DIAGNOSTIC_BUILD.md)
+- [Build instructions](docs/REPRODUCIBLE_BUILDS.md)
+- [Test report](release/TEST_REPORT.md)
+
+## Building from source
+
+Install CMake and a Windows x86-64 MinGW cross-compiler, then run:
 
 ```bash
 ./tests/run-host-tests.sh
 ./build-windows.sh
 ./scripts/verify-release-config.sh
-./scripts/package-release.sh v0.2.0-rc.1
 ```
 
-The host script runs the portable stall-detector and buffer-recovery tests. The Windows build also produces `logger_shutdown_tests.exe`, which should be run under Wine or CrossOver for its target-runtime check. Toolchain layouts differ; if Homebrew's package does not expose the expected x86-64 compiler names, set `CC` and `CXX` explicitly. See [`docs/REPRODUCIBLE_BUILDS.md`](docs/REPRODUCIBLE_BUILDS.md).
+See [Reproducible builds](docs/REPRODUCIBLE_BUILDS.md) for the complete warning-build, Windows-test, and packaging procedure.
 
-## Known limitations
+## Credits and license
 
-- Validation so far is limited to one Apple Silicon/CrossOver Preview environment.
-- The plugin hooks Windows audio and COM interfaces; Wine implementations and game updates may change behavior.
-- Adaptive retry addresses the confirmed buffer-size failure only. It is not a general audio-device recovery system.
-- Reset/restart and client-recreation fallbacks are experimental and disabled.
-- Full diagnostic logging adds overhead and can contain local paths and device metadata. Review logs before sharing them.
-- No game executable, game data, saves, or copyrighted game assets are included.
+- **Original dialogue and multichannel spatial-audio fix:** Rajan Singh, [`woahitsraj/MetaphorMacosAudioFix`](https://github.com/woahitsraj/MetaphorMacosAudioFix)
+- **Additional work in this project:** random audio-cutout recovery, diagnostics, tests, safety hardening, and packaging
+- **Third-party components:** MinHook/HDE and Ultimate ASI Loader, under their included licenses
 
-## Project documentation
+The original MIT `LICENSE` and copyright notice are preserved unchanged. See [NOTICE.md](NOTICE.md) and [THIRD_PARTY.md](THIRD_PARTY.md) for full attribution.
 
-- [Architecture](docs/ARCHITECTURE.md)
-- [Reproducible builds](docs/REPRODUCIBLE_BUILDS.md)
-- [Diagnostic build](docs/DIAGNOSTIC_BUILD.md)
-- [Recovery design](docs/RECOVERY_PROTOTYPE.md)
-- [Wine spatial-audio notes](docs/WINE_SPATIAL_AUDIO_NOTES.md)
-- [Contributing](CONTRIBUTING.md) and [security policy](SECURITY.md)
-
-## License and attribution
-
-The project remains under the upstream [MIT License](LICENSE), Copyright (c) 2026 Rajan Singh. The fork retains upstream history and attribution. Vendored MinHook/HDE and bundled Ultimate ASI Loader retain their own licenses; see [NOTICE.md](NOTICE.md) and [THIRD_PARTY.md](THIRD_PARTY.md).
+This is an unofficial community project. It is not affiliated with or endorsed by ATLUS, SEGA, CodeWeavers, Valve, Microsoft, or Apple. Use it at your own risk.

@@ -1,4 +1,4 @@
-# v0.2.0-rc.1 test report
+# Metaphor: ReFantazio Complete Audio Patch v0.2.0-rc.1 — Test Report
 
 Verification date: 2026-07-22. Branch: `audio-buffer-recovery-release`.
 

@@ -1,4 +1,4 @@
-name: Release candidate artifact
+name: Complete Audio Patch release artifact
 
 on:
   workflow_dispatch:
@@ -48,9 +48,9 @@ jobs:
       - name: Upload release candidate artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MetaphorAudioFix-${{ steps.version.outputs.value }}-win64
+          name: Metaphor-ReFantazio-Complete-Audio-Patch-${{ steps.version.outputs.value }}-win64
           path: |
-            dist/MetaphorAudioFix-${{ steps.version.outputs.value }}-win64.zip
-            dist/MetaphorAudioFix-${{ steps.version.outputs.value }}-win64.zip.sha256
+            dist/Metaphor-ReFantazio-Complete-Audio-Patch-${{ steps.version.outputs.value }}-win64.zip
+            dist/Metaphor-ReFantazio-Complete-Audio-Patch-${{ steps.version.outputs.value }}-win64.zip.sha256
           if-no-files-found: error
           retention-days: 30

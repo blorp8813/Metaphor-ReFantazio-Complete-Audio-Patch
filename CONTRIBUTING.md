@@ -1,4 +1,4 @@
-# Contributing
+# Contributing to Metaphor: ReFantazio Complete Audio Patch
 
 Thank you for helping improve this unofficial compatibility project.
 
