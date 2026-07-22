@@ -2,6 +2,9 @@ cmake_minimum_required(VERSION 3.20)
 
 project(MetaphorAudioFix LANGUAGES C CXX)
 
+option(METAPHOR_AUDIO_FIX_ENABLE_FAULT_INJECTION
+    "Compile test-only buffer-too-large fault injection into the ASI" OFF)
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -33,6 +36,7 @@ execute_process(
     COMMAND ${CMAKE_CXX_COMPILER} -print-sysroot
     OUTPUT_VARIABLE MINGW_SYSROOT
     OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
 )
 
 file(REAL_PATH "${WINPTHREAD_STATIC_PATH}" WINPTHREAD_STATIC_PATH)
@@ -75,6 +79,21 @@ if (NOT EXISTS "${WINPTHREAD_DLL_PATH}")
     message(FATAL_ERROR "Could not locate libwinpthread-1.dll for packaging")
 endif()
 
+find_file(WINPTHREAD_LICENSE_PATH
+    NAMES COPYING.winpthreads.txt copyright
+    PATHS
+        "${MINGW_SYSROOT}/share/mingw32"
+        "${WINPTHREAD_ROOT_DIR}/share/mingw32"
+        "${COMPILER_DIR}/../${MINGW_TRIPLE}/share/mingw32"
+        "/usr/share/doc/mingw-w64-common"
+        "/usr/share/doc/mingw-w64-x86-64-dev"
+    NO_DEFAULT_PATH
+)
+
+if (NOT EXISTS "${WINPTHREAD_LICENSE_PATH}")
+    message(FATAL_ERROR "Could not locate the winpthreads license for packaging")
+endif()
+
 set(ASI_LOADER_DLL_PATH "${CMAKE_SOURCE_DIR}/third_party/Ultimate-ASI-Loader/winmm.dll")
 set(ASI_LOADER_LICENSE_PATH "${CMAKE_SOURCE_DIR}/third_party/Ultimate-ASI-Loader/LICENSE.txt")
 
@@ -111,6 +130,7 @@ target_compile_definitions(MetaphorAudioFix PRIVATE
     WIN32_LEAN_AND_MEAN
     _WIN32_WINNT=0x0A00
     WINVER=0x0A00
+    METAPHOR_AUDIO_FIX_ENABLE_FAULT_INJECTION=$<BOOL:${METAPHOR_AUDIO_FIX_ENABLE_FAULT_INJECTION}>
 )
 
 target_link_libraries(MetaphorAudioFix PRIVATE
@@ -146,6 +166,7 @@ add_executable(logger_shutdown_tests
 add_executable(buffer_recovery_tests tests/buffer_recovery_tests.cpp)
 
 target_include_directories(buffer_recovery_tests PRIVATE src)
+target_compile_definitions(buffer_recovery_tests PRIVATE METAPHOR_AUDIO_FIX_ENABLE_FAULT_INJECTION=1)
 
 target_link_options(buffer_recovery_tests PRIVATE
     -static-libgcc
@@ -216,6 +237,7 @@ add_custom_command(TARGET MetaphorAudioFix POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:MetaphorAudioFix> ${CMAKE_BINARY_DIR}/package/
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/MetaphorAudioFix.ini ${CMAKE_BINARY_DIR}/package/
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${WINPTHREAD_DLL_PATH} ${CMAKE_BINARY_DIR}/package/
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${WINPTHREAD_LICENSE_PATH} ${CMAKE_BINARY_DIR}/package/winpthreads-LICENSE.txt
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${ASI_LOADER_DLL_PATH} ${CMAKE_BINARY_DIR}/package/
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${ASI_LOADER_LICENSE_PATH} ${CMAKE_BINARY_DIR}/package/Ultimate-ASI-Loader-LICENSE.txt
 )

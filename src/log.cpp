@@ -21,6 +21,8 @@ struct Entry {
 
 struct LoggerState {
     std::atomic<bool> enabled{false};
+    std::atomic<bool> diagnostics_enabled{false};
+    std::atomic<bool> recovery_enabled{false};
     std::atomic<bool> stopping{false};
     std::atomic<bool> writer_terminated{false};
     std::atomic<std::uint64_t> dropped{0};
@@ -194,9 +196,15 @@ DWORD WINAPI WriterThread(void*)
     return 0;
 }
 
-void Enqueue(Level level, const char* format, va_list args)
+bool CategoryEnabled(bool recovery)
 {
-    if (!g_state.enabled.load(std::memory_order_acquire) || !format) {
+    return recovery ? g_state.recovery_enabled.load(std::memory_order_acquire)
+                    : g_state.diagnostics_enabled.load(std::memory_order_acquire);
+}
+
+void Enqueue(Level level, bool recovery, const char* format, va_list args)
+{
+    if (!g_state.enabled.load(std::memory_order_acquire) || !CategoryEnabled(recovery) || !format) {
         return;
     }
 
@@ -206,7 +214,7 @@ void Enqueue(Level level, const char* format, va_list args)
         g_state.dropped.fetch_add(1, std::memory_order_relaxed);
         return;
     }
-    if (!g_state.enabled.load(std::memory_order_acquire)) {
+    if (!g_state.enabled.load(std::memory_order_acquire) || !CategoryEnabled(recovery)) {
         ReleaseSRWLockShared(&g_state.producer_gate);
         return;
     }
@@ -245,9 +253,10 @@ void Enqueue(Level level, const char* format, va_list args)
 }
 }
 
-void Init(const std::filesystem::path& path, bool enabled, std::uint64_t max_bytes, int max_files)
+void Init(const std::filesystem::path& path, bool diagnostics_enabled, bool recovery_enabled,
+          std::uint64_t max_bytes, int max_files)
 {
-    if (!enabled) {
+    if (!diagnostics_enabled && !recovery_enabled) {
         return;
     }
 
@@ -280,6 +289,8 @@ void Init(const std::filesystem::path& path, bool enabled, std::uint64_t max_byt
         ReleaseSRWLockExclusive(&g_state.producer_gate);
         return;
     }
+    g_state.diagnostics_enabled.store(diagnostics_enabled, std::memory_order_release);
+    g_state.recovery_enabled.store(recovery_enabled, std::memory_order_release);
     g_state.enabled.store(true, std::memory_order_release);
     ReleaseSRWLockExclusive(&g_state.producer_gate);
 }
@@ -293,7 +304,7 @@ void Info(const char* format, ...)
 {
     va_list args;
     va_start(args, format);
-    Enqueue(Level::Info, format, args);
+    Enqueue(Level::Info, false, format, args);
     va_end(args);
 }
 
@@ -301,7 +312,7 @@ void Warn(const char* format, ...)
 {
     va_list args;
     va_start(args, format);
-    Enqueue(Level::Warning, format, args);
+    Enqueue(Level::Warning, false, format, args);
     va_end(args);
 }
 
@@ -309,7 +320,23 @@ void Error(const char* format, ...)
 {
     va_list args;
     va_start(args, format);
-    Enqueue(Level::Error, format, args);
+    Enqueue(Level::Error, false, format, args);
+    va_end(args);
+}
+
+void RecoveryWarn(const char* format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    Enqueue(Level::Warning, true, format, args);
+    va_end(args);
+}
+
+void RecoveryError(const char* format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    Enqueue(Level::Error, true, format, args);
     va_end(args);
 }
 
@@ -317,6 +344,8 @@ bool Shutdown(DWORD timeout_ms)
 {
     const ULONGLONG shutdown_start = GetTickCount64();
     const bool was_enabled = g_state.enabled.exchange(false, std::memory_order_acq_rel);
+    g_state.diagnostics_enabled.store(false, std::memory_order_release);
+    g_state.recovery_enabled.store(false, std::memory_order_release);
     if (!was_enabled && !g_state.thread) {
         return ShutdownComplete();
     }

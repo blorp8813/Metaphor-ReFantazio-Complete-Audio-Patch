@@ -115,7 +115,7 @@ static UINT FindHookEntry(LPVOID pTarget)
 }
 
 //-------------------------------------------------------------------------
-static PHOOK_ENTRY AddHookEntry()
+static PHOOK_ENTRY AddHookEntry(void)
 {
     if (g_hooks.pItems == NULL)
     {

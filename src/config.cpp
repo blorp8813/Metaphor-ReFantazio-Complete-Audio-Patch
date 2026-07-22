@@ -142,6 +142,8 @@ Config LoadConfig(const std::filesystem::path& path)
         } else if (current_section == "recovery") {
             if (key == "enabled") {
                 config.recovery_enabled = ParseBool(value, config.recovery_enabled);
+            } else if (key == "recoverylogging") {
+                config.recovery_logging = ParseBool(value, config.recovery_logging);
             } else if (key == "adaptivebufferretry") {
                 config.recovery_adaptive_buffer_retry = ParseBool(value, config.recovery_adaptive_buffer_retry);
             } else if (key == "resetrestartfallback") {
@@ -159,8 +161,13 @@ Config LoadConfig(const std::filesystem::path& path)
             } else if (key == "recoverycooldownms") {
                 config.recovery_cooldown_ms = ParseInt(value, config.recovery_cooldown_ms);
             } else if (key == "faultinjectbuffertoolargeafter") {
+#if METAPHOR_AUDIO_FIX_ENABLE_FAULT_INJECTION
                 config.recovery_fault_inject_buffer_too_large_after =
                     ParseInt(value, config.recovery_fault_inject_buffer_too_large_after);
+#else
+                // Public builds deliberately compile out fault injection.
+                config.recovery_fault_inject_buffer_too_large_after = 0;
+#endif
             }
         } else if (current_section == "bootstrap") {
             if (key == "modulepolltimeoutms") {

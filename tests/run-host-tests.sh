@@ -14,7 +14,8 @@ mkdir -p "${build_dir}"
 
 "${build_dir}/stall_detector_tests"
 
-"${cxx}" -std=c++20 -Wall -Wextra -Werror -pthread \
+"${cxx}" -std=c++20 -Wall -Wextra -Werror -Wpedantic -pthread \
+  -DMETAPHOR_AUDIO_FIX_ENABLE_FAULT_INJECTION=1 \
   -I"${root_dir}/src" \
   "${root_dir}/tests/buffer_recovery_tests.cpp" \
   -o "${build_dir}/buffer_recovery_tests"

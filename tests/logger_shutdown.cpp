@@ -38,7 +38,7 @@ int main()
     std::filesystem::path log_path = std::filesystem::path(temporary_directory) / L"MetaphorAudioFix-logger-shutdown-test.log";
     DeleteFileW(log_path.c_str());
 
-    Log::Init(log_path, true, 1024 * 1024, 2);
+    Log::Init(log_path, true, false, 1024 * 1024, 2);
     if (!Log::Enabled()) {
         return 2;
     }
@@ -87,13 +87,24 @@ int main()
     }
     CloseHandle(producer_context.start_event);
     const bool handles_closed = Log::ShutdownComplete();
-    DeleteFileW(log_path.c_str());
 
     if (!shutdown_succeeded || !handles_closed || producer_wait != WAIT_OBJECT_0) {
         std::fprintf(stderr, "logger_shutdown: FAIL shutdown=%d handles_closed=%d producer_wait=0x%08lX\n",
                      shutdown_succeeded, handles_closed, static_cast<unsigned long>(producer_wait));
         return 7;
     }
+
+    // Exercise the production category independently of full diagnostics.
+    Log::Init(log_path, false, true, 1024 * 1024, 2);
+    if (!Log::Enabled()) {
+        return 8;
+    }
+    Log::Info("diagnostics-disabled record must be ignored");
+    Log::RecoveryWarn("BUFFER_TOO_LARGE_CAUGHT recovery-only logger test");
+    if (!Log::Shutdown(10000) || !Log::ShutdownComplete()) {
+        return 9;
+    }
+    DeleteFileW(log_path.c_str());
 
     std::puts("logger_shutdown: PASS");
     return 0;

@@ -6,6 +6,10 @@
 #include <cstddef>
 #include <cstdint>
 
+#ifndef METAPHOR_AUDIO_FIX_ENABLE_FAULT_INJECTION
+#define METAPHOR_AUDIO_FIX_ENABLE_FAULT_INJECTION 0
+#endif
+
 namespace BufferRecovery {
 
 using Hr = std::int32_t;
@@ -82,12 +86,17 @@ public:
 
     bool ShouldInject(std::uint64_t successful_get_buffer_cycles)
     {
+#if METAPHOR_AUDIO_FIX_ENABLE_FAULT_INJECTION
         if (!config_.enabled || config_.fault_inject_after_successes == 0 ||
             successful_get_buffer_cycles < config_.fault_inject_after_successes) {
             return false;
         }
         bool expected = false;
         return fault_injected_.compare_exchange_strong(expected, true, std::memory_order_acq_rel);
+#else
+        (void)successful_get_buffer_cycles;
+        return false;
+#endif
     }
 
     template <typename Backend>
@@ -251,7 +260,9 @@ public:
 
 private:
     Config config_{};
+#if METAPHOR_AUDIO_FIX_ENABLE_FAULT_INJECTION
     std::atomic<bool> fault_injected_{false};
+#endif
     std::atomic_flag recovery_gate_ = ATOMIC_FLAG_INIT;
     std::array<std::uint64_t, 100> recovery_timestamps_{};
     std::size_t recovery_timestamp_count_ = 0;
