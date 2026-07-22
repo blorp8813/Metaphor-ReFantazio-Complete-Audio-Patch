@@ -19,6 +19,7 @@ zip_path="${dist_dir}/${release_name}.zip"
 sha_path="${zip_path}.sha256"
 
 required_runtime=(
+  InstallCompleteAudioPatch.exe
   MetaphorCompleteAudioPatch.asi
   MetaphorCompleteAudioPatch.ini
   libwinpthread-1.dll

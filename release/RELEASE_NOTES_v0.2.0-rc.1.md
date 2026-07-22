@@ -30,17 +30,18 @@ Testing is still limited. These results do not prove that every possible source 
 ## Installation
 
 1. Close the game and Steam inside CrossOver or Wine.
-2. Extract the release ZIP beside `METAPHOR.exe`.
-3. In CrossOver, select the bottle containing Steam and open **Wine Configuration**.
-4. On the **Libraries** tab, add a `winmm` override.
-5. Edit `winmm` and set it to **Native, then Builtin**.
-6. Apply the change, fully restart Steam inside the bottle, and launch the game.
+2. Extract the entire release ZIP to a folder.
+3. Select the Steam bottle in CrossOver, click **Run Command**, and run `InstallCompleteAudioPatch.exe`.
+4. Choose **Yes**, confirm the detected game folder, and finish installation.
+5. Fully restart Steam inside the bottle and launch the game.
+
+The guided installer copies the required files, preserves an existing patch INI, and sets the bottle-local `winmm` override to **Native, then Builtin**. The README includes manual installation as a fallback.
 
 Do not overwrite a `winmm.dll` shared by another mod without checking it first.
 
 ## Uninstall
 
-Close the game and Steam and remove the patch files. Remove the `winmm` Wine Configuration library override only if no other ASI mod uses it. Do not remove `winmm.dll` or `libwinpthread-1.dll` if another mod depends on them. The patch does not modify saves, game data, Steam Cloud, or unrelated CrossOver bottles.
+Close the game and Steam, run `InstallCompleteAudioPatch.exe` again, and choose **No**. It asks before removing potentially shared files or the `winmm` override. Manual removal instructions are also in the README. The patch does not modify saves, game data, Steam Cloud, or unrelated CrossOver bottles.
 
 ## Reporting problems
 
@@ -57,7 +58,8 @@ Do not upload game binaries, saves, credentials, personal paths, or unrelated Cr
 
 ## Checksums
 
-- `MetaphorCompleteAudioPatch.asi`: `525adf81b3fb1484cbc6c32d1184b16a133caa63cc16c37b239a871516dd0f7b`
-- `Metaphor-ReFantazio-Complete-Audio-Patch-v0.2.0-rc.1-win64.zip`: `04f85df675e38e343c575c5d92ac08333aea200b4984055055b3164a4ad95e6b`
+- `InstallCompleteAudioPatch.exe`: `29d2079b274b88f154f5c31e00d2460ba0e98d3a76de9945cbe2d8d88d7c9538`
+- `MetaphorCompleteAudioPatch.asi`: `78ecd8841eef85788464fedf3e759e144d74ed624fe76665d91915ac88d1b3de`
+- `Metaphor-ReFantazio-Complete-Audio-Patch-v0.2.0-rc.1-win64.zip`: `a43d27a98a31ddde6d0ca4725629b814ffcc9240518961e7b99004c48024c1f0`
 
 This unofficial community project is not affiliated with or endorsed by ATLUS, SEGA, CodeWeavers, Valve, Microsoft, or Apple.
