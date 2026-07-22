@@ -27,7 +27,21 @@ The exact game build used during testing was not recorded. Other Mac models, Win
 
 Download the newest ZIP from this repository's **Releases** page. Verify it using the included `.sha256` checksum file before installing.
 
-## Installation
+## Easy installation
+
+1. Fully close the game and Steam inside CrossOver or Wine.
+2. Extract the entire release ZIP to a folder.
+3. In CrossOver, select the bottle that contains Steam and the game.
+4. Click **Run Command**, then **Browse** and select `InstallCompleteAudioPatch.exe` from the extracted folder.
+5. Click **Run**.
+6. Choose **Yes** to install. Confirm the detected game folder, or select `METAPHOR.exe` if the installer asks you to locate it.
+7. When installation finishes, fully restart Steam inside the bottle and launch the game normally.
+
+The installer copies the patch files and sets `winmm` to **Native, then Builtin** for the selected bottle. It preserves an existing `MetaphorCompleteAudioPatch.ini`. It does not modify the game executable, game data, saves, Steam Cloud, other bottles, or global CrossOver settings.
+
+If the installer finds a different `winmm.dll`, it asks whether to keep or replace it because another mod may be using that file.
+
+## Manual installation
 
 1. Fully close the game and Steam inside CrossOver or Wine.
 2. In Steam, right-click `Metaphor: ReFantazio` and open **Properties → Installed Files → Browse**.
@@ -95,6 +109,10 @@ When reporting a problem, include your macOS version, Mac model and chip, CrossO
 **Never upload the game executable, game files, saves, account details, personal paths, or unrelated CrossOver bottle contents.**
 
 ## Uninstall
+
+For guided removal, run `InstallCompleteAudioPatch.exe` again inside the game's CrossOver bottle and choose **No**. The uninstaller asks before removing shared loader/runtime files or the Wine override.
+
+To uninstall manually:
 
 1. Close the game and Steam.
 2. Remove `MetaphorCompleteAudioPatch.asi` and `MetaphorCompleteAudioPatch.ini` from the game folder.

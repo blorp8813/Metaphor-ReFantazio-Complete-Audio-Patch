@@ -151,6 +151,34 @@ set_target_properties(MetaphorCompleteAudioPatch PROPERTIES
     SUFFIX ".asi"
 )
 
+add_executable(InstallCompleteAudioPatch WIN32 installer/installer.cpp)
+
+target_compile_definitions(InstallCompleteAudioPatch PRIVATE
+    NOMINMAX
+    UNICODE
+    _UNICODE
+    WIN32_LEAN_AND_MEAN
+    _WIN32_WINNT=0x0A00
+    WINVER=0x0A00
+)
+
+target_link_libraries(InstallCompleteAudioPatch PRIVATE
+    advapi32
+    comdlg32
+)
+
+target_link_options(InstallCompleteAudioPatch PRIVATE
+    -static-libgcc
+    -static-libstdc++
+)
+
+set_target_properties(InstallCompleteAudioPatch PROPERTIES
+    OUTPUT_NAME "InstallCompleteAudioPatch"
+    SUFFIX ".exe"
+)
+
+add_dependencies(InstallCompleteAudioPatch MetaphorCompleteAudioPatch)
+
 add_executable(smoke_xaudio2 tests/smoke_xaudio2.cpp)
 
 add_executable(stall_detector_tests
@@ -240,6 +268,12 @@ add_custom_command(TARGET MetaphorCompleteAudioPatch POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${WINPTHREAD_LICENSE_PATH} ${CMAKE_BINARY_DIR}/package/winpthreads-LICENSE.txt
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${ASI_LOADER_DLL_PATH} ${CMAKE_BINARY_DIR}/package/
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${ASI_LOADER_LICENSE_PATH} ${CMAKE_BINARY_DIR}/package/Ultimate-ASI-Loader-LICENSE.txt
+)
+
+add_custom_command(TARGET InstallCompleteAudioPatch POST_BUILD
+    COMMAND ${CMAKE_STRIP} --strip-unneeded $<TARGET_FILE:InstallCompleteAudioPatch>
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/package
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:InstallCompleteAudioPatch> ${CMAKE_BINARY_DIR}/package/
 )
 
 add_custom_command(TARGET smoke_xaudio2 POST_BUILD

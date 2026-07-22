@@ -6,6 +6,7 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- Guided Windows installer and uninstaller designed to run inside the game's CrossOver/Wine bottle, with Steam game detection, browse fallback, safe handling of an existing loader, and automatic bottle-local `winmm` override configuration.
 - Fix for random loss of all game audio during gameplay. When Wine temporarily cannot accept the game's full audio packet, the patch safely retries with the available space instead of allowing the game to stop its audio stream.
 - Observation-only stall detection, audio-client telemetry, endpoint notifications, rate-limited error reporting, and asynchronous bounded log rotation.
 - Separate lightweight recovery logging that remains useful with full diagnostics disabled.
