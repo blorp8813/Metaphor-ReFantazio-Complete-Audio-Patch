@@ -23,7 +23,6 @@ struct LoggerState {
     std::atomic<bool> enabled{false};
     std::atomic<bool> stopping{false};
     std::atomic<bool> writer_terminated{false};
-    std::atomic<std::uint32_t> active_producers{0};
     std::atomic<std::uint64_t> dropped{0};
     SRWLOCK producer_gate = SRWLOCK_INIT;
     SRWLOCK queue_lock = SRWLOCK_INIT;
@@ -197,12 +196,7 @@ DWORD WINAPI WriterThread(void*)
 
 void Enqueue(Level level, const char* format, va_list args)
 {
-    g_state.active_producers.fetch_add(1, std::memory_order_acq_rel);
-    struct ProducerGuard {
-        ~ProducerGuard() { g_state.active_producers.fetch_sub(1, std::memory_order_acq_rel); }
-    } producer_guard;
-
-    if (!g_state.enabled.load(std::memory_order_relaxed) || !format) {
+    if (!g_state.enabled.load(std::memory_order_acquire) || !format) {
         return;
     }
 
@@ -334,14 +328,6 @@ bool Shutdown(DWORD timeout_ms)
         }
     }
     ReleaseSRWLockExclusive(&g_state.producer_gate);
-
-    while (g_state.active_producers.load(std::memory_order_acquire) != 0) {
-        if (timeout_ms != INFINITE && GetTickCount64() - shutdown_start >= timeout_ms) {
-            OutputDebugStringA("MetaphorAudioFix: logger producers did not drain; handles retained and DLL unload must be refused.\n");
-            return false;
-        }
-        SwitchToThread();
-    }
 
     if (g_state.thread) {
         DWORD writer_timeout = timeout_ms;
