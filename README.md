@@ -9,15 +9,19 @@ It fixes two separate problems:
 
 The original dialogue and multichannel fix was created by Rajan Singh in the open-source [`MetaphorMacosAudioFix`](https://github.com/woahitsraj/MetaphorMacosAudioFix) project. This independent project is based on that code and adds the random audio-cutout fix, diagnostics, testing, and release packaging.
 
-## Compatibility
+## Tested configuration
 
-Currently tested with:
+Testing has only been performed on this configuration so far:
 
-- `Metaphor: ReFantazio` through Windows Steam
-- CrossOver Preview on Apple Silicon macOS
-- Built-in Mac speakers and normal macOS audio output
+- MacBook Air with Apple M5
+- 10-core CPU and 10-core GPU
+- 24 GB unified memory
+- macOS 27.0, build `26A5378n`
+- CrossOver Preview 27.0.0.40646, preview build `20260702`
+- Windows Steam running `Metaphor: ReFantazio`
+- Built-in MacBook Air speakers and normal macOS audio output
 
-Other Wine, CrossOver, Proton, Windows, Mac, and audio-device combinations may work but have not all been tested. `v0.2.0-rc.1` is a prerelease candidate, not a final universal fix.
+The exact game build used during testing was not recorded. Other Mac models, Wine or CrossOver versions, Proton, Windows, and audio devices may work but have not been tested yet. `v0.2.0-rc.1` is a prerelease candidate, not a final universal fix.
 
 ## Download
 

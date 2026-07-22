@@ -17,6 +17,8 @@ The patch checks how much space is actually available and retries once with a sa
 
 ## Test results
 
+Testing has only been performed on a MacBook Air with an Apple M5, 10-core CPU, 10-core GPU, 24 GB unified memory, macOS 27.0 build `26A5378n`, and CrossOver Preview 27.0.0.40646 preview build `20260702`. The game was run through Windows Steam using the built-in MacBook Air speakers and normal macOS audio output. The exact game build was not recorded.
+
 - One controlled test recovery succeeded without an audible interruption.
 - Ten naturally occurring audio-buffer events recovered successfully.
 - Audio remained audible and full-size processing resumed afterward.
@@ -48,7 +50,7 @@ Do not upload game binaries, saves, credentials, personal paths, or unrelated Cr
 
 ## Known limitations
 
-- Testing has primarily covered one Apple Silicon Mac and CrossOver Preview environment.
+- Testing has only covered the MacBook Air and CrossOver Preview configuration listed above.
 - The cutout fix handles the confirmed temporary audio-buffer problem; other unrelated audio failures may have different causes.
 - Experimental stream reset/restart and client recreation remain disabled.
 - Full diagnostic logging is optional and adds some overhead.
@@ -56,6 +58,6 @@ Do not upload game binaries, saves, credentials, personal paths, or unrelated Cr
 ## Checksums
 
 - `MetaphorAudioFix.asi`: `5befdfca7c78087edd378d2d21ffbd3321ec5a225de565197d6017f3db9c1a74`
-- `Metaphor-ReFantazio-Complete-Audio-Patch-v0.2.0-rc.1-win64.zip`: `f3e004381dd0acfbd3b7cc94e667d40e5334e3c3c4d5d102f81858a92d14c6f6`
+- `Metaphor-ReFantazio-Complete-Audio-Patch-v0.2.0-rc.1-win64.zip`: `1b5ec8eeb4b904ad1fed8e317b08a3345285ac3f2e1e0c846f2124b351d6dc7a`
 
 This unofficial community project is not affiliated with or endorsed by ATLUS, SEGA, CodeWeavers, Valve, Microsoft, or Apple.
