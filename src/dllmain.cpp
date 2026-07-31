@@ -2583,7 +2583,7 @@ DWORD WINAPI MainThread(void*)
         g_config.diagnostics_max_log_files
     );
 
-    Log::Info("%s loaded from %s", Narrow(kFixName).c_str(), Narrow(g_module_dir.wstring()).c_str());
+    Log::Info("%s loaded", Narrow(kFixName).c_str());
     Log::Info("Config: xaudio2_enabled=%d force_stereo_mastering_voice=%d override_explicit_multichannel_voices=%d",
               g_config.xaudio2_enabled,
               g_config.force_stereo_mastering_voice,
@@ -2598,9 +2598,8 @@ DWORD WINAPI MainThread(void*)
               g_config.reject_multichannel_is_format_supported,
               g_config.reject_multichannel_initialize);
     Log::Info("Config: spatial_wrapper_enabled=%d", g_config.spatial_wrapper_enabled);
-    Log::Info("Config: diagnostics_enabled=%d log_path=%s max_log_size_mb=%d max_log_files=%d",
+    Log::Info("Config: diagnostics_enabled=%d max_log_size_mb=%d max_log_files=%d",
               g_config.diagnostics_enabled,
-              Narrow(log_path.wstring()).c_str(),
               g_config.diagnostics_max_log_size_mb,
               g_config.diagnostics_max_log_files);
     Log::Info("Config: watchdog observation_only=1 stall_timeout_ms=%d poll_interval_ms=%d non_silent_window_ms=%d buffer_activity_window_ms=%d periodic_status_ms=%d",
