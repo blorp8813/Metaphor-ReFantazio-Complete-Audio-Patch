@@ -2717,7 +2717,10 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID)
 
         HANDLE thread = CreateThread(nullptr, 0, &MainThread, nullptr, CREATE_SUSPENDED, nullptr);
         if (thread) {
-            SetThreadPriority(thread, THREAD_PRIORITY_TIME_CRITICAL);
+            // This thread only installs hooks and polls for late-loaded audio
+            // modules. Giving it real-time priority can preempt the game's
+            // render/loading work each time the polling loop wakes.
+            SetThreadPriority(thread, THREAD_PRIORITY_NORMAL);
             ResumeThread(thread);
             CloseHandle(thread);
         }
