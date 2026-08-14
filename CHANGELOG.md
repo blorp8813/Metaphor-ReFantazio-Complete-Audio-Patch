@@ -2,6 +2,33 @@
 
 All notable changes to this project are documented here.
 
+## [1.0.0] - 2026-08-13
+
+### Added
+
+- A circuit-breaker-limited Stop/Reset/Start fallback when Wine reports the
+  confirmed full-buffer condition and adaptive retry has no space available.
+- Test-only process-wide fault injection for exercising the zero-availability
+  recovery path without acquiring or corrupting a real render buffer first.
+
+### Changed
+
+- Enabled `ResetRestartFallback` in the production configuration after a live
+  CrossOver test completed the entire recovery in 2.751 ms without an audible
+  interruption.
+- Kept client recreation disabled and fault injection compiled out of public
+  builds.
+
+### Validation
+
+- A user log from an M1 Pro reproduced the same full-buffer geometry: a
+  480-frame request, 1440/1440 frames occupied, zero available, and
+  `AUDCLNT_E_BUFFER_TOO_LARGE`.
+- A 93-minute natural session recovered 21 buffer-pressure events with no
+  failures, stalls, or device changes.
+- A controlled live recovery completed Stop, Reset, Start, refreshed padding,
+  and the real 480-frame request successfully; audio and callbacks continued.
+
 ## [0.2.0-rc.1] - 2026-07-22
 
 ### Added

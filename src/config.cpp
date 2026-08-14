@@ -168,6 +168,13 @@ Config LoadConfig(const std::filesystem::path& path)
                 // Public builds deliberately compile out fault injection.
                 config.recovery_fault_inject_buffer_too_large_after = 0;
 #endif
+            } else if (key == "faultinjectzeroavailability") {
+#if METAPHOR_COMPLETE_AUDIO_PATCH_ENABLE_FAULT_INJECTION
+                config.recovery_fault_inject_zero_availability =
+                    ParseBool(value, config.recovery_fault_inject_zero_availability);
+#else
+                config.recovery_fault_inject_zero_availability = false;
+#endif
             }
         } else if (current_section == "bootstrap") {
             if (key == "modulepolltimeoutms") {

@@ -10,7 +10,7 @@ The ASI loader starts `MetaphorCompleteAudioPatch.asi` in the game process. MinH
 
 On `AUDCLNT_E_BUFFER_TOO_LARGE`, the coordinator reads current padding, validates `padding <= capacity`, computes `available = capacity - padding`, and retries once with `min(period, available)`. Success returns the actual acquired frame count to the mixer. The next callback requests the normal full processing period again.
 
-The production path does not call `Stop`, `Reset`, or `Start`, does not recreate the client, and never loops a failed processing pass. Reset/restart fallback code is retained for research but disabled in production. Client recreation is not implemented.
+If no frames are available, padding is inconsistent, or the adaptive request also returns `AUDCLNT_E_BUFFER_TOO_LARGE`, production can make one circuit-breaker-limited Stop/Reset/Start attempt and then one real buffer request. It never loops a failed processing pass. Client recreation is not implemented.
 
 ## Diagnostics and logging
 
@@ -26,4 +26,4 @@ The hook queries the returned COM object for `IMMDeviceEnumerator` rather than a
 
 ## Uncertainties
 
-Wine and CrossOver implement WASAPI, COM, timing, and event behavior differently from Windows. Callback cadence, padding semantics, clock correlation, and endpoint notifications may vary by engine and version. The current recovery is deliberately limited to the confirmed buffer-size failure.
+Wine and CrossOver implement WASAPI, COM, timing, and event behavior differently from Windows. Callback cadence, padding semantics, clock correlation, and endpoint notifications may vary by engine and version. The current recovery is deliberately limited to the confirmed buffer-size failure and the bounded restart needed when the buffer is completely full.

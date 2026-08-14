@@ -29,13 +29,14 @@ struct Config {
     bool recovery_enabled = true;
     bool recovery_logging = true;
     bool recovery_adaptive_buffer_retry = true;
-    bool recovery_reset_restart_fallback = false;
+    bool recovery_reset_restart_fallback = true;
     bool recovery_recreate_client_fallback = false;
     int recovery_maximum_attempts_per_failure = 1;
     int recovery_maximum_recoveries_per_window = 3;
     int recovery_window_ms = 30000;
     int recovery_cooldown_ms = 1000;
     int recovery_fault_inject_buffer_too_large_after = 0;
+    bool recovery_fault_inject_zero_availability = false;
     int module_poll_timeout_ms = 120000;
     int module_poll_interval_ms = 250;
 };

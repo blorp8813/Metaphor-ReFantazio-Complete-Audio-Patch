@@ -246,6 +246,22 @@ int main()
     }
 
     {
+        Config config = RecoveryConfig();
+        config.fault_inject_zero_availability = true;
+        Coordinator coordinator(config);
+        MockBackend backend{{BufferRecovery::kOk}};
+        const AcquireOutcome outcome = coordinator.Acquire(backend, 480, 1440, true);
+        Expect(outcome.fault_injected_zero_availability && outcome.available_frames == 0,
+               "zero-availability injection reproduces full-buffer geometry");
+        Expect(!outcome.adaptive_attempted && outcome.recovery_succeeded,
+               "zero-availability injection completes the bounded fallback");
+        Expect(backend.padding_index == 1,
+               "zero-availability injection reads real padding only after restart");
+        Expect(backend.get_requests == std::vector<std::uint32_t>{480},
+               "zero-availability injection acquires a real buffer only after restart");
+    }
+
+    {
         Coordinator coordinator(RecoveryConfig());
         MockBackend backend{{BufferRecovery::kBufferTooLarge}, {1440}};
         backend.reset_result = kFail;

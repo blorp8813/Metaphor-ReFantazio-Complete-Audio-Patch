@@ -11,7 +11,7 @@ The original dialogue and multichannel fix was created by Rajan Singh in the ope
 
 ## Tested configuration
 
-Testing has only been performed on this configuration so far:
+The patch has been tested on these configurations:
 
 - MacBook Air with Apple M5
 - 10-core CPU and 10-core GPU
@@ -21,7 +21,13 @@ Testing has only been performed on this configuration so far:
 - Windows Steam running `Metaphor: ReFantazio`
 - Built-in MacBook Air speakers and normal macOS audio output
 
-The exact game build used during testing was not recorded. Other Mac models, Wine or CrossOver versions, Proton, Windows, and audio devices may work but have not been tested yet. `v0.2.0-rc.1` is a prerelease candidate, not a final universal fix.
+Additional recovery evidence was collected on a MacBook Pro with an M1 Pro,
+macOS Tahoe 26.5.2, CrossOver 26.2, game version 1.02, and built-in speakers.
+That system's log captured the full-buffer failure that the new bounded stream
+restart handles. A controlled test of that same recovery path was also completed
+with AirPods Max without an audible interruption.
+
+The exact game build used for the MacBook Air testing was not recorded. Other Mac models, Wine or CrossOver versions, Proton, Windows, and audio devices may work but have not been tested yet. No finite test set can prove every possible audio failure is fixed.
 
 ## Download
 
@@ -38,6 +44,18 @@ Download the newest ZIP from this repository's **Releases** page.
 7. When installation finishes, fully restart Steam inside the bottle and launch the game normally.
 
 The installer copies the patch files and sets `winmm` to **Native, then Builtin** for the selected bottle. It preserves an existing `MetaphorCompleteAudioPatch.ini`. It does not modify the game executable, game data, saves, Steam Cloud, other bottles, or global CrossOver settings.
+
+### Upgrading from v0.2.0-rc.1
+
+The installer preserves your existing INI, and that release shipped with the
+new fallback disabled. After upgrading, open `MetaphorCompleteAudioPatch.ini`
+beside `METAPHOR.exe` and set:
+
+```ini
+ResetRestartFallback = true
+```
+
+New installations of v1.0.0 already include this setting.
 
 If the installer finds a different `winmm.dll`, it asks whether to keep or replace it because another mod may be using that file.
 
@@ -69,16 +87,17 @@ If another mod already installed `winmm.dll`, do not overwrite it blindly. It ma
 
 The included INI is ready for normal use. Most users should not need to edit it.
 
-The random-cutout fix is enabled, while more invasive experimental recovery methods remain disabled:
+The random-cutout fix and its bounded stream-restart fallback are enabled. Client recreation and all fault injection remain disabled:
 
 ```ini
 [Recovery]
 Enabled = true
 RecoveryLogging = true
 AdaptiveBufferRetry = true
-ResetRestartFallback = false
+ResetRestartFallback = true
 RecreateClientFallback = false
 FaultInjectBufferTooLargeAfter = 0
+FaultInjectZeroAvailability = false
 ```
 
 When the temporary audio-buffer problem occurs, the patch writes a small recovery record to `MetaphorCompleteAudioPatch.log`. The log is size-limited and rotated automatically. Set `RecoveryLogging = false` to disable it.
@@ -100,7 +119,7 @@ When the temporary audio-buffer problem occurs, the patch writes a small recover
 
 ### All audio still cuts out
 
-- Check `MetaphorCompleteAudioPatch.log` for `BUFFER_TOO_LARGE_CAUGHT`, `ADAPTIVE_BUFFER_RETRY_SUCCEEDED`, or `ADAPTIVE_BUFFER_RETRY_FAILED`.
+- Check `MetaphorCompleteAudioPatch.log` for `BUFFER_TOO_LARGE_CAUGHT`, `ADAPTIVE_BUFFER_RETRY_SUCCEEDED`, `BUFFER_RECOVERY_SUCCEEDED`, or `BUFFER_RECOVERY_FAILED`.
 - Enable the diagnostic sample in [`config/MetaphorCompleteAudioPatch.diagnostic.ini`](config/MetaphorCompleteAudioPatch.diagnostic.ini) for a short reproduction session.
 - Restore the normal production INI after testing because full diagnostics add overhead.
 
@@ -126,7 +145,7 @@ The patch does not modify saves, Steam Cloud data, game data, or global CrossOve
 
 The dialogue fix keeps the spatial-audio interface expected by the game, then mixes its multichannel static audio objects into a normal stereo render stream.
 
-The cutout fix handles a temporary `AUDCLNT_E_BUFFER_TOO_LARGE` response. For example, if the game asks for 480 audio frames but only 448 currently fit, the patch submits 448 safely instead of returning the error to the game. The next update returns to the normal 480-frame size. This recovery does not automatically stop, reset, restart, or recreate the audio stream.
+The cutout fix handles a temporary `AUDCLNT_E_BUFFER_TOO_LARGE` response. For example, if the game asks for 480 audio frames but only 448 currently fit, the patch submits 448 safely instead of returning the error to the game. The next update returns to the normal 480-frame size. If no frames fit at all, the patch can perform one bounded Stop, Reset, and Start sequence before retrying the real buffer request. It does not recreate the audio client.
 
 Developers can read:
 

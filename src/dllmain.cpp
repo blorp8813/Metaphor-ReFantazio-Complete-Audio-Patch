@@ -98,6 +98,9 @@ std::atomic<HANDLE> g_runtime_shutdown_event{nullptr};
 HMODULE g_self_reference = nullptr;
 std::atomic<std::uint64_t> g_active_spatial_streams{0};
 std::atomic<bool> g_teardown_requested{false};
+#if METAPHOR_COMPLETE_AUDIO_PATCH_ENABLE_FAULT_INJECTION
+std::atomic<bool> g_fault_injection_claimed{false};
+#endif
 LARGE_INTEGER g_qpc_frequency{};
 
 std::uint64_t QpcNow()
@@ -965,6 +968,7 @@ SpatialRenderStream::SpatialRenderStream(SpatialAudioWrapper* owner, const Spati
           MillisecondsToQpc(g_config.recovery_window_ms),
           MillisecondsToQpc(g_config.recovery_cooldown_ms),
           static_cast<std::uint64_t>(g_config.recovery_fault_inject_buffer_too_large_after),
+          g_config.recovery_fault_inject_zero_availability,
       })
 {
     InitializeCriticalSection(&lock_);
@@ -1310,8 +1314,15 @@ HRESULT STDMETHODCALLTYPE SpatialRenderStream::BeginUpdatingAudioObjects(UINT32*
     }
 
     AudioClientRecoveryBackend backend(audio_client_, render_client_, started_, this);
-    const bool inject_buffer_too_large = recovery_.ShouldInject(
+    bool inject_buffer_too_large = recovery_.ShouldInject(
         successful_get_buffer_cycles_.load(std::memory_order_acquire));
+#if METAPHOR_COMPLETE_AUDIO_PATCH_ENABLE_FAULT_INJECTION
+    if (inject_buffer_too_large) {
+        bool expected = false;
+        inject_buffer_too_large = g_fault_injection_claimed.compare_exchange_strong(
+            expected, true, std::memory_order_acq_rel);
+    }
+#endif
     recovery_in_progress_ = true;
     BufferRecovery::AcquireOutcome outcome = recovery_.Acquire(
         backend, period_frames_, buffer_capacity_frames_, inject_buffer_too_large);
@@ -1384,10 +1395,11 @@ void SpatialRenderStream::LogBufferRecoveryOutcome(const BufferRecovery::Acquire
 {
 #if METAPHOR_COMPLETE_AUDIO_PATCH_ENABLE_FAULT_INJECTION
     if (outcome.fault_injected) {
-        Log::Warn("FAULT_INJECTION_BUFFER_TOO_LARGE stream=%p successful_cycles=%llu threshold=%d",
+        Log::Warn("FAULT_INJECTION_BUFFER_TOO_LARGE stream=%p successful_cycles=%llu threshold=%d zero_availability=%d",
                   this,
                   static_cast<unsigned long long>(successful_get_buffer_cycles_.load(std::memory_order_relaxed)),
-                  g_config.recovery_fault_inject_buffer_too_large_after);
+                  g_config.recovery_fault_inject_buffer_too_large_after,
+                  outcome.fault_injected_zero_availability);
     }
 #endif
     if (!outcome.buffer_too_large_caught) {
@@ -2612,7 +2624,7 @@ DWORD WINAPI MainThread(void*)
               g_config.diagnostics_detailed_buffer_logging,
               g_config.diagnostics_buffer_log_sample_rate,
               g_config.diagnostics_error_reminder_ms);
-    Log::Info("Config: recovery_enabled=%d adaptive_buffer_retry=%d reset_restart_fallback=%d recreate_client_fallback=%d maximum_attempts_per_failure=%d maximum_recoveries_per_window=%d recovery_window_ms=%d recovery_cooldown_ms=%d fault_inject_buffer_too_large_after=%d",
+    Log::Info("Config: recovery_enabled=%d adaptive_buffer_retry=%d reset_restart_fallback=%d recreate_client_fallback=%d maximum_attempts_per_failure=%d maximum_recoveries_per_window=%d recovery_window_ms=%d recovery_cooldown_ms=%d fault_inject_buffer_too_large_after=%d fault_inject_zero_availability=%d",
               g_config.recovery_enabled,
               g_config.recovery_adaptive_buffer_retry,
               g_config.recovery_reset_restart_fallback,
@@ -2621,7 +2633,8 @@ DWORD WINAPI MainThread(void*)
               g_config.recovery_maximum_recoveries_per_window,
               g_config.recovery_window_ms,
               g_config.recovery_cooldown_ms,
-              g_config.recovery_fault_inject_buffer_too_large_after);
+              g_config.recovery_fault_inject_buffer_too_large_after,
+              g_config.recovery_fault_inject_zero_availability);
     Log::RecoveryWarn("RECOVERY_CONFIGURATION enabled=%d adaptive_buffer_retry=%d reset_restart_fallback=%d recreate_client_fallback=%d maximum_attempts_per_failure=%d maximum_recoveries_per_window=%d recovery_window_ms=%d recovery_cooldown_ms=%d fault_injection_compiled=%d",
                       g_config.recovery_enabled,
                       g_config.recovery_adaptive_buffer_retry,

@@ -40,13 +40,14 @@ assert_value Diagnostics Enabled false
 assert_value Recovery Enabled true
 assert_value Recovery RecoveryLogging true
 assert_value Recovery AdaptiveBufferRetry true
-assert_value Recovery ResetRestartFallback false
+assert_value Recovery ResetRestartFallback true
 assert_value Recovery RecreateClientFallback false
 assert_value Recovery MaximumAttemptsPerFailure 1
 assert_value Recovery MaximumRecoveriesPerWindow 3
 assert_value Recovery RecoveryWindowMs 30000
 assert_value Recovery RecoveryCooldownMs 1000
 assert_value Recovery FaultInjectBufferTooLargeAfter 0
+assert_value Recovery FaultInjectZeroAvailability false
 
 expected_license_sha256="5edfd1b8f63b3fc659be327df16940fc21c088fe42e151f2d2c9e3d8911f7d15"
 copyright_line="Copyright (c) 2026 blorp8813"

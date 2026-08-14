@@ -8,11 +8,10 @@ not recreate `IAudioClient`, the game-facing `SpatialRenderStream`, the event
 handle, or active spatial objects. Other GetBuffer errors retain their prior
 behavior.
 
-Recovery is configured under `[Recovery]`. A missing or malformed `Enabled`
-value leaves recovery disabled. `FaultInjectBufferTooLargeAfter` defaults to
-zero and malformed values also resolve to zero. The adaptive-retry-only package
-sets `Enabled=true`, but reset/restart, client recreation, and fault injection
-remain off.
+Recovery is configured under `[Recovery]`. The production package enables the
+adaptive retry and bounded reset/restart fallback. Client recreation remains
+off. `FaultInjectBufferTooLargeAfter` defaults to zero, malformed values also
+resolve to zero, and public builds compile fault injection out.
 
 ## Buffer geometry
 
@@ -113,7 +112,11 @@ With a positive `FaultInjectBufferTooLargeAfter`, the next processing pass after
 that many successful acquisitions skips the initial full-period GetBuffer and
 injects the same logical error into the common recovery path. It does not obtain,
 modify, release, or corrupt a Wine render buffer. An atomic latch limits the
-injection to once per stream.
+injection to once per process. In a test-only build,
+`FaultInjectZeroAvailability=true` also supplies the confirmed full-buffer
+geometry to the adaptive stage, forcing the real bounded Stop/Reset/Start,
+post-restart padding read, and GetBuffer path. Public builds compile both forms
+of fault injection out.
 
 ## Events
 

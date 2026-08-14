@@ -41,10 +41,10 @@ Run `build/windows/logger_shutdown_tests.exe` through an existing Wine or CrossO
 
 ```bash
 ./scripts/verify-release-config.sh
-./scripts/package-release.sh v0.2.0-rc.1
-shasum -a 256 dist/Metaphor-ReFantazio-Complete-Audio-Patch-v0.2.0-rc.1-win64.zip
+SOURCE_DATE_EPOCH=1786579200 ./scripts/package-release.sh v1.0.0
+shasum -a 256 dist/Metaphor-ReFantazio-Complete-Audio-Patch-v1.0.0-win64.zip
 ```
 
-The package script normalizes staged file timestamps to `SOURCE_DATE_EPOCH` (defaulting to the fixed `v0.2.0-rc.1` release date, `1784678400`), sorts the ZIP input, and omits filesystem metadata. Rebuilding with the same source, toolchain, bundled DLLs, and epoch is expected to produce the same ZIP. The ASI itself is only byte-reproducible when the compiler and linker versions are also identical.
+The package script normalizes staged file timestamps to `SOURCE_DATE_EPOCH` (use `1786579200` for v1.0.0), sorts the ZIP input, and omits filesystem metadata. Rebuilding with the same source, toolchain, bundled DLLs, and epoch is expected to produce the same ZIP. The ASI itself is only byte-reproducible when the compiler and linker versions are also identical.
 
 Record the commit, branch, tool versions, CMake fault-injection cache value, test results, and SHA-256 manifest in the release test report.

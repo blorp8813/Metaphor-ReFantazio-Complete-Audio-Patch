@@ -40,6 +40,7 @@ struct Config {
     std::uint64_t recovery_window_ticks = 0;
     std::uint64_t recovery_cooldown_ticks = 0;
     std::uint64_t fault_inject_after_successes = 0;
+    bool fault_inject_zero_availability = false;
 };
 
 struct AcquireOutcome {
@@ -51,6 +52,7 @@ struct AcquireOutcome {
     std::uint32_t get_buffer_calls = 0;
 
     bool fault_injected = false;
+    bool fault_injected_zero_availability = false;
     bool buffer_too_large_caught = false;
     bool adaptive_attempted = false;
     bool adaptive_succeeded = false;
@@ -109,6 +111,8 @@ public:
         outcome.original_request_frames = period_frames;
         outcome.buffer_capacity_frames = buffer_capacity_frames;
         outcome.fault_injected = inject_buffer_too_large;
+        outcome.fault_injected_zero_availability =
+            inject_buffer_too_large && config_.fault_inject_zero_availability;
 
         if (inject_buffer_too_large) {
             outcome.initial_hr = kBufferTooLarge;
@@ -129,7 +133,14 @@ public:
         outcome.adaptive_hr = outcome.initial_hr;
         bool fallback_needed = !config_.adaptive_retry;
         if (config_.adaptive_retry) {
-            outcome.padding_hr = backend.GetCurrentPadding(&outcome.padding_frames);
+            if (outcome.fault_injected_zero_availability) {
+                // A test build can supply the confirmed full-buffer geometry
+                // without touching a real render buffer before recovery.
+                outcome.padding_hr = kOk;
+                outcome.padding_frames = buffer_capacity_frames;
+            } else {
+                outcome.padding_hr = backend.GetCurrentPadding(&outcome.padding_frames);
+            }
             outcome.padding_consistent = Succeeded(outcome.padding_hr) &&
                                          outcome.padding_frames <= buffer_capacity_frames;
             if (outcome.padding_consistent) {

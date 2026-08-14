@@ -3,7 +3,7 @@ set -euo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 version="${1:-}"
-package_dir="${root_dir}/build/windows/package"
+package_dir="${PACKAGE_DIR:-${root_dir}/build/windows/package}"
 dist_dir="${root_dir}/dist"
 
 if [[ ! "${version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
@@ -59,8 +59,8 @@ cp "${root_dir}/README.md" "${root_dir}/NOTICE.md" "${root_dir}/THIRD_PARTY.md" 
   fi
 )
 
-# Fixed release-candidate epoch (2026-07-22 00:00:00 UTC) unless the
-# release builder deliberately supplies another reproducible epoch.
+# Fixed historical default unless the release builder supplies the intended
+# release epoch explicitly.
 source_date_epoch="${SOURCE_DATE_EPOCH:-1784678400}"
 if touch -d "@${source_date_epoch}" "${staging_dir}/README.md" 2>/dev/null; then
   find "${staging_dir}" -type f -exec touch -d "@${source_date_epoch}" {} +
