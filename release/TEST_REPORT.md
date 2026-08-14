@@ -1,4 +1,4 @@
-# Metaphor: ReFantazio Complete Audio Patch v1.0.0 — Test Report
+# Metaphor: ReFantazio Complete Audio Patch v1.0.1 — Test Report
 
 Verification date: 2026-08-13. Branch: `main`.
 
@@ -6,9 +6,11 @@ Verification date: 2026-08-13. Branch: `main`.
 |---|---|
 | Portable stall-detector tests | PASS |
 | Portable buffer-recovery tests | PASS, including zero-availability fallback |
+| Portable installer-migration tests | PASS |
 | Warning build (`-Wall -Wextra -Wpedantic`) | PASS, no warnings |
 | Windows x86-64 ASI and installer build | PASS |
 | Windows recovery tests under CrossOver | PASS |
+| Windows installer-migration tests under CrossOver | PASS |
 | Windows stall-detector tests under CrossOver | PASS |
 | Windows logger-shutdown harness under CrossOver | PASS |
 | Production configuration and license gate | PASS |

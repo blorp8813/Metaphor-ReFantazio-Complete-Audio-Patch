@@ -21,3 +21,11 @@ mkdir -p "${build_dir}"
   -o "${build_dir}/buffer_recovery_tests"
 
 "${build_dir}/buffer_recovery_tests"
+
+"${cxx}" -std=c++20 -Wall -Wextra -Werror -Wpedantic \
+  -I"${root_dir}/installer" \
+  "${root_dir}/installer/ini_migration.cpp" \
+  "${root_dir}/tests/ini_migration_tests.cpp" \
+  -o "${build_dir}/ini_migration_tests"
+
+"${build_dir}/ini_migration_tests"

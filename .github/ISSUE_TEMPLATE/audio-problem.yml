@@ -1,0 +1,110 @@
+name: Audio problem report
+description: Report dialogue, mixing, cutout, or recovery problems under CrossOver or Wine.
+title: "[Audio]: "
+labels: []
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve the patch. Please review logs before posting and remove personal paths or device information you do not want to share. Never upload game files, saves, credentials, or unrelated bottle contents.
+
+  - type: input
+    id: patch-version
+    attributes:
+      label: Patch version
+      description: The release shown on the ZIP or GitHub release page.
+      placeholder: v1.0.1
+    validations:
+      required: true
+
+  - type: input
+    id: mac-model
+    attributes:
+      label: Mac model and chip
+      placeholder: MacBook Pro, M1 Pro
+    validations:
+      required: true
+
+  - type: input
+    id: macos-version
+    attributes:
+      label: macOS version
+      placeholder: Tahoe 26.5.2
+    validations:
+      required: true
+
+  - type: input
+    id: crossover-version
+    attributes:
+      label: CrossOver or Wine version
+      placeholder: CrossOver 26.2
+    validations:
+      required: true
+
+  - type: input
+    id: game-version
+    attributes:
+      label: Game version
+      placeholder: "1.02"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: output-type
+    attributes:
+      label: Audio output type
+      options:
+        - Built-in speakers
+        - Wired headphones or speakers
+        - Bluetooth headphones or speakers
+        - HDMI, display, or dock
+        - Virtual or aggregate device
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: output-device
+    attributes:
+      label: Audio output device
+      placeholder: MacBook Pro Speakers
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe what you heard, approximately how long the game had been running, and whether audio returned.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps or circumstances
+      description: Include the area, activity, or pattern that seems connected, if any.
+      placeholder: |
+        1. Launch the game...
+        2. Play for...
+        3. Audio...
+    validations:
+      required: false
+
+  - type: textarea
+    id: log
+    attributes:
+      label: Reviewed log excerpt
+      description: Paste only the relevant section from MetaphorCompleteAudioPatch.log after removing personal information.
+      render: text
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I reviewed the report and removed personal paths, credentials, game files, saves, and unrelated bottle information.
+          required: true

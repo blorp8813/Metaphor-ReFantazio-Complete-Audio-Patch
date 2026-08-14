@@ -2,6 +2,26 @@
 
 All notable changes to this project are documented here.
 
+## [1.0.1] - 2026-08-13
+
+### Changed
+
+- The guided installer now upgrades an existing
+  `ResetRestartFallback = false` setting to the stable `true` default
+  automatically.
+- All other INI settings, comments, custom log paths, formatting, and line
+  endings are preserved.
+- The INI update is written to a temporary file and replaced atomically, leaving
+  the original untouched if migration cannot complete.
+
+### Validation
+
+- Added portable and Windows tests covering the old shipped INI, customized
+  settings, comments, CRLF and LF endings, UTF-8 BOMs, duplicate keys, and all
+  accepted false-value spellings.
+- Installer migration, buffer recovery, stall detection, and logger shutdown
+  tests passed under CrossOver.
+
 ## [1.0.0] - 2026-08-13
 
 ### Added

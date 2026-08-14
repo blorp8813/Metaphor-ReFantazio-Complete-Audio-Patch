@@ -151,7 +151,10 @@ set_target_properties(MetaphorCompleteAudioPatch PROPERTIES
     SUFFIX ".asi"
 )
 
-add_executable(InstallCompleteAudioPatch WIN32 installer/installer.cpp)
+add_executable(InstallCompleteAudioPatch WIN32
+    installer/ini_migration.cpp
+    installer/installer.cpp
+)
 
 target_compile_definitions(InstallCompleteAudioPatch PRIVATE
     NOMINMAX
@@ -192,6 +195,23 @@ add_executable(logger_shutdown_tests
 )
 
 add_executable(buffer_recovery_tests tests/buffer_recovery_tests.cpp)
+
+add_executable(ini_migration_tests
+    installer/ini_migration.cpp
+    tests/ini_migration_tests.cpp
+)
+
+target_include_directories(ini_migration_tests PRIVATE installer)
+
+target_link_options(ini_migration_tests PRIVATE
+    -static-libgcc
+    -static-libstdc++
+)
+
+set_target_properties(ini_migration_tests PROPERTIES
+    OUTPUT_NAME "ini_migration_tests"
+    SUFFIX ".exe"
+)
 
 target_include_directories(buffer_recovery_tests PRIVATE src)
 target_compile_definitions(buffer_recovery_tests PRIVATE METAPHOR_COMPLETE_AUDIO_PATCH_ENABLE_FAULT_INJECTION=1)

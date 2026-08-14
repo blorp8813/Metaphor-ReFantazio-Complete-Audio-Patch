@@ -45,17 +45,11 @@ Download the newest ZIP from this repository's **Releases** page.
 
 The installer copies the patch files and sets `winmm` to **Native, then Builtin** for the selected bottle. It preserves an existing `MetaphorCompleteAudioPatch.ini`. It does not modify the game executable, game data, saves, Steam Cloud, other bottles, or global CrossOver settings.
 
-### Upgrading from v0.2.0-rc.1
+### Upgrading from an earlier release
 
-The installer preserves your existing INI, and that release shipped with the
-new fallback disabled. After upgrading, open `MetaphorCompleteAudioPatch.ini`
-beside `METAPHOR.exe` and set:
-
-```ini
-ResetRestartFallback = true
-```
-
-New installations of v1.0.0 already include this setting.
+Run the new installer normally. It preserves your existing INI and every custom
+setting, but automatically enables the stable full-buffer recovery if an older
+release left it disabled. You do not need to edit the INI yourself.
 
 If the installer finds a different `winmm.dll`, it asks whether to keep or replace it because another mod may be using that file.
 
@@ -124,6 +118,8 @@ When the temporary audio-buffer problem occurs, the patch writes a small recover
 - Restore the normal production INI after testing because full diagnostics add overhead.
 
 When reporting a problem, include your macOS version, Mac model and chip, CrossOver or Wine version, game version, output device, plugin checksum, and a short relevant log excerpt. Review the log first and remove personal paths or device information you do not want to share.
+
+[Open the guided audio-problem form](https://github.com/blorp8813/Metaphor-ReFantazio-Complete-Audio-Patch/issues/new?template=audio-problem.yml) to report a problem on GitHub.
 
 **Never upload the game executable, game files, saves, account details, personal paths, or unrelated CrossOver bottle contents.**
 

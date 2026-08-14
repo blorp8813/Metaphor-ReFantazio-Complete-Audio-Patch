@@ -12,6 +12,8 @@
 #include <string>
 #include <vector>
 
+#include "ini_migration.hpp"
+
 namespace {
 namespace fs = std::filesystem;
 
@@ -414,6 +416,94 @@ bool CopyPayloadFile(const fs::path& source, const fs::path& destination)
     return false;
 }
 
+std::optional<DWORD> WriteTextFileAtomically(const fs::path& path, const std::string& text)
+{
+    fs::path temporary;
+    HANDLE file = INVALID_HANDLE_VALUE;
+    for (unsigned int attempt = 0; attempt < 100; ++attempt) {
+        temporary = path;
+        temporary += L".upgrade." + std::to_wstring(GetCurrentProcessId()) +
+                     L"." + std::to_wstring(attempt) + L".tmp";
+        file = CreateFileW(
+            temporary.c_str(),
+            GENERIC_WRITE,
+            0,
+            nullptr,
+            CREATE_NEW,
+            FILE_ATTRIBUTE_TEMPORARY,
+            nullptr
+        );
+        if (file != INVALID_HANDLE_VALUE) {
+            break;
+        }
+        const DWORD create_error = GetLastError();
+        if (create_error != ERROR_FILE_EXISTS && create_error != ERROR_ALREADY_EXISTS) {
+            return create_error;
+        }
+    }
+    if (file == INVALID_HANDLE_VALUE) {
+        return ERROR_FILE_EXISTS;
+    }
+
+    std::optional<DWORD> error;
+    std::size_t offset = 0;
+    while (offset < text.size()) {
+        const std::size_t remaining = text.size() - offset;
+        const DWORD request = static_cast<DWORD>(std::min<std::size_t>(remaining, 1024 * 1024));
+        DWORD written = 0;
+        if (!WriteFile(file, text.data() + offset, request, &written, nullptr) || written != request) {
+            error = GetLastError();
+            if (*error == ERROR_SUCCESS) {
+                error = ERROR_WRITE_FAULT;
+            }
+            break;
+        }
+        offset += written;
+    }
+    if (!error && !FlushFileBuffers(file)) {
+        error = GetLastError();
+    }
+    if (!CloseHandle(file) && !error) {
+        error = GetLastError();
+    }
+    if (error) {
+        DeleteFileW(temporary.c_str());
+        return error;
+    }
+    if (!MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        const DWORD move_error = GetLastError();
+        DeleteFileW(temporary.c_str());
+        return move_error;
+    }
+    return std::nullopt;
+}
+
+enum class IniMigrationStatus {
+    NotNeeded,
+    Updated,
+    Failed,
+};
+
+IniMigrationStatus UpgradeExistingIni(const fs::path& path)
+{
+    const auto original = ReadTextFile(path);
+    if (!original) {
+        ShowError(L"The existing patch settings could not be read, so installation stopped without changing them.");
+        return IniMigrationStatus::Failed;
+    }
+
+    const auto migration = InstallerConfig::EnableResetRestartFallback(*original);
+    if (migration.replacements == 0) {
+        return IniMigrationStatus::NotNeeded;
+    }
+    if (const auto error = WriteTextFileAtomically(path, migration.text)) {
+        ShowError(L"The existing patch settings could not be upgraded automatically. The original INI was left unchanged.\n\n" +
+                  WindowsError(*error));
+        return IniMigrationStatus::Failed;
+    }
+    return IniMigrationStatus::Updated;
+}
+
 int InstallPatch(const fs::path& installer_directory, const fs::path& game_directory)
 {
     bool replace_loader = true;
@@ -435,14 +525,23 @@ int InstallPatch(const fs::path& installer_directory, const fs::path& game_direc
         replace_loader = answer == IDYES;
     }
 
+    const fs::path destination_ini = game_directory / kIniFile;
+    const bool existing_ini = IsRegularFile(destination_ini);
     for (const wchar_t* filename : kPayloadFiles) {
         if (_wcsicmp(filename, kLoaderFile) == 0 && !replace_loader) {
             continue;
         }
-        if (_wcsicmp(filename, kIniFile) == 0 && IsRegularFile(game_directory / filename)) {
+        if (_wcsicmp(filename, kIniFile) == 0 && existing_ini) {
             continue;
         }
         if (!CopyPayloadFile(installer_directory / filename, game_directory / filename)) {
+            return 2;
+        }
+    }
+    IniMigrationStatus migration_status = IniMigrationStatus::NotNeeded;
+    if (existing_ini) {
+        migration_status = UpgradeExistingIni(destination_ini);
+        if (migration_status == IniMigrationStatus::Failed) {
             return 2;
         }
     }
@@ -450,9 +549,16 @@ int InstallPatch(const fs::path& installer_directory, const fs::path& game_direc
         return 3;
     }
 
-    ShowInfo(L"Installation completed successfully.\n\n"
-             L"Any existing patch settings were preserved.\n\n"
-             L"winmm is set to Native, then Builtin for this CrossOver bottle.\n\n"
+    std::wstring settings_message;
+    if (migration_status == IniMigrationStatus::Updated) {
+        settings_message = L"Your existing settings were preserved, and the stable full-buffer recovery was enabled automatically.";
+    } else if (existing_ini) {
+        settings_message = L"Your existing patch settings were preserved and already use the current recovery behavior.";
+    } else {
+        settings_message = L"The recommended settings were installed automatically.";
+    }
+    ShowInfo(L"Installation completed successfully.\n\n" + settings_message +
+             L"\n\nwinmm is set to Native, then Builtin for this CrossOver bottle.\n\n"
              L"Fully restart Steam inside the bottle before launching the game.");
     return 0;
 }
